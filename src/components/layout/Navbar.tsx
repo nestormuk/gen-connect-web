@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { BookOpen, Menu, Bell, User, LogOut } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { motion } from 'framer-motion';
+import { supabase } from '../../lib/supabase';
 
 interface NavbarProps {
   onMenuClick: () => void;
@@ -11,7 +12,46 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const [showUserMenu, setShowUserMenu] = React.useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [displayName, setDisplayName] = useState<string>('User');
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    async function fetchUserProfile() {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        // Fetch the user's profile from the database
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('display_name')
+          .eq('user_id', user.id)
+          .single();
+
+        if (error) {
+          console.error('Error fetching user profile in navbar:', error);
+          // Fallback to email if there's an error
+          setDisplayName(user.email?.split('@')[0] || 'User');
+        } else if (data) {
+          // Use the display name from the profile
+          setDisplayName(data.display_name);
+        } else {
+          // Fallback to email if no profile found
+          setDisplayName(user.email?.split('@')[0] || 'User');
+        }
+      } catch (err) {
+        console.error('Error in fetchUserProfile for navbar:', err);
+        setDisplayName(user.email?.split('@')[0] || 'User');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchUserProfile();
+  }, [user]);
 
   const handleSignOut = async () => {
     try {
@@ -61,7 +101,11 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
                   <User size={18} />
                 </div>
                 <span className="hidden md:block font-medium text-gray-700">
-                  {user?.email?.split('@')[0] || 'User'}
+                  {loading ? (
+                    <div className="h-4 w-20 bg-gray-200 animate-pulse rounded"></div>
+                  ) : (
+                    displayName
+                  )}
                 </span>
               </button>
               

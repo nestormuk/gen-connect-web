@@ -64,11 +64,13 @@ const FamilyPage: React.FC = () => {
   const { user } = useAuth();
   const [familyGroup, setFamilyGroup] = useState<FamilyGroup | null>(null);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('Family Member');
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [isCreator, setIsCreator] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchFamilyData = async () => {
@@ -81,7 +83,6 @@ const FamilyPage: React.FC = () => {
           .select('family_id, role')
           .eq('user_id', user.id);
 
-        // Handle the case where the user has no family membership
         if (membershipError) {
           console.error('Error fetching membership:', membershipError);
           setLoading(false);
@@ -138,17 +139,28 @@ const FamilyPage: React.FC = () => {
             .eq('user_id', member.user_id)
             .single();
 
-          // Get user email
-          const { data: userData } = await supabase
-            .from('users')
-            .select('email')
-            .eq('id', member.user_id)
-            .single();
+          // Get user email - this is a simplified approach
+          let email = 'No email';
+          try {
+            // First try the auth.users table (if public access is allowed)
+            const { data: userData } = await supabase
+              .from('auth.users')
+              .select('email')
+              .eq('id', member.user_id)
+              .single();
+              
+            if (userData) {
+              email = userData.email;
+            }
+          } catch (e) {
+            // If that fails, try another approach or leave as default
+            console.log('Could not fetch email, using default');
+          }
 
           return {
             id: member.id,
             name: profileData?.display_name || 'Unknown User',
-            email: userData?.email || 'No email',
+            email: email,
             role: member.role,
             avatar_url: profileData?.avatar_url,
             joined_at: member.joined_at
@@ -175,61 +187,15 @@ const FamilyPage: React.FC = () => {
 
   const handleCreateFamily = async () => {
     if (!user) {
-      console.error("No user object available");
-      alert("Please sign in to create a family group");
+      setError("Please sign in to create a family group");
       return;
     }
 
     try {
-      setLoading(true);
+      setCreating(true);
+      setError(null);
       
-      // Debugging: Log the current user information
-      console.log("Current user object:", user);
-      console.log("Attempting to create family group for user ID:", user.id);
-
-      // Verify user exists in auth.users table
-      const { data: authUserData, error: authUserError } = await supabase
-        .from('auth.users')
-        .select('id')
-        .eq('id', user.id)
-        .single();
-
-      console.log("Auth user verification:", { data: authUserData, error: authUserError });
-      
-      if (authUserError) {
-        console.error("User verification error:", authUserError);
-        // Try alternative table if schema is different
-        const { data: altUserData, error: altUserError } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', user.id)
-          .single();
-          
-        console.log("Alternative user verification:", { data: altUserData, error: altUserError });
-        
-        if (altUserError) {
-          throw new Error("User ID verification failed. You may not have proper database access.");
-        }
-      }
-
-      // Test read permission for family_groups table
-      const { data: testReadData, error: testReadError } = await supabase
-        .from('family_groups')
-        .select('id')
-        .limit(1);
-      
-      console.log("Table read test:", { 
-        canReadFamilyGroups: !testReadError, 
-        data: testReadData, 
-        error: testReadError 
-      });
-
-      if (testReadError) {
-        console.error("Permission issue: Cannot read from family_groups table");
-        throw new Error("Database permission error. Cannot access family_groups table.");
-      }
-
-      // Create new family group
+      // Create new family group - simplified approach
       const { data: familyData, error: familyError } = await supabase
         .from('family_groups')
         .insert([
@@ -240,44 +206,16 @@ const FamilyPage: React.FC = () => {
         ])
         .select();
 
-      console.log("Family creation response:", { data: familyData, error: familyError });
-
       if (familyError) {
         console.error("Family creation error:", familyError);
-        
-        // Test specific insert values to identify constraint issues
-        const testInsert = {
-          name: 'My Family', 
-          created_by: user.id
-        };
-        console.log("Attempted insert data:", testInsert);
-        
-        // Check if the created_by field is a UUID
-        const isValidUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(user.id);
-        console.log("Is user.id a valid UUID?", isValidUUID);
-        
-        throw familyError;
+        throw new Error(familyError.message || "Failed to create family group");
       }
 
       if (!familyData || familyData.length === 0) {
-        console.error("No family data returned after insert");
         throw new Error("Family creation failed - no data returned");
       }
 
       const newFamilyId = familyData[0].id;
-      console.log("Family created with ID:", newFamilyId);
-
-      // Test family_members read permission before insert
-      const { data: testMembersData, error: testMembersError } = await supabase
-        .from('family_members')
-        .select('id')
-        .limit(1);
-        
-      console.log("Can read family_members table:", { 
-        success: !testMembersError, 
-        data: testMembersData, 
-        error: testMembersError 
-      });
 
       // Add creator as first member
       const { data: memberData, error: memberError } = await supabase
@@ -291,135 +229,44 @@ const FamilyPage: React.FC = () => {
         ])
         .select();
 
-      console.log("Family member creation response:", { data: memberData, error: memberError });
-
       if (memberError) {
-        console.error("Member creation error:", memberError);
-        
-        // Test if foreign keys exist
-        const foreignKeyTest = {
-          family_id: newFamilyId,
-          user_id: user.id
-        };
-        console.log("Foreign key test values:", foreignKeyTest);
-        
-        // Verify family_id exists
-        const { data: familyExists, error: familyExistsError } = await supabase
-          .from('family_groups')
-          .select('id')
-          .eq('id', newFamilyId)
-          .single();
-          
-        console.log("Family ID exists check:", { exists: !!familyExists, error: familyExistsError });
-        
-        // If we got here but member creation failed, we should clean up the created family
-        console.log("Attempting to clean up created family group due to member creation failure");
-        const { error: cleanupError } = await supabase
+        // If member creation fails, clean up the family group
+        await supabase
           .from('family_groups')
           .delete()
           .eq('id', newFamilyId);
           
-        console.log("Cleanup result:", { error: cleanupError });
-        
-        throw memberError;
+        throw new Error(memberError.message || "Failed to add you as family member");
       }
 
-      console.log("Family member created successfully:", memberData);
+      // Get the user's display name
+      const { data: userData } = await supabase
+        .from('user_profiles')
+        .select('display_name, avatar_url')
+        .eq('user_id', user.id)
+        .single();
 
-      // Instead of page reload, update the state directly
-      // and fetch the updated data
-      const fetchNewFamilyData = async () => {
-        try {
-          // Get the family group details
-          const { data: familyData, error: familyError } = await supabase
-            .from('family_groups')
-            .select('*, created_by')
-            .eq('id', newFamilyId)
-            .single();
+      // Create the family group object with the creator as the only member
+      setFamilyGroup({
+        id: newFamilyId,
+        name: 'My Family',
+        created_at: new Date().toISOString(),
+        members: [{
+          id: memberData[0].id,
+          name: userData?.display_name || 'You',
+          email: user.email || 'No email',
+          role: 'Creator',
+          avatar_url: userData?.avatar_url,
+          joined_at: new Date().toISOString()
+        }]
+      });
 
-          if (familyError) {
-            console.error("Error fetching created family:", familyError);
-            throw familyError;
-          }
-
-          // Get user profile for the creator - test both possible table paths
-          let profileData;
-          try {
-            const { data, error } = await supabase
-              .from('user_profiles')
-              .select('display_name, avatar_url')
-              .eq('user_id', user.id)
-              .single();
-              
-            profileData = data;
-            console.log("Profile data fetch:", { data, error });
-          } catch (profileError) {
-            console.error("Error fetching profile:", profileError);
-            // Try alternative table name or path if needed
-          }
-
-          // Get user email - test both possible paths
-          let userData;
-          try {
-            const { data, error } = await supabase
-              .from('users')
-              .select('email')
-              .eq('id', user.id)
-              .single();
-              
-            userData = data;
-            console.log("User data fetch:", { data, error });
-          } catch (userError) {
-            console.error("Error fetching user:", userError);
-            // Try alternative
-            try {
-              const { data, error } = await supabase
-                .from('auth.users')
-                .select('email')
-                .eq('id', user.id)
-                .single();
-                
-              userData = data;
-              console.log("Auth user data fetch:", { data, error });
-            } catch (authUserError) {
-              console.error("Error fetching auth user:", authUserError);
-            }
-          }
-
-          const creatorMember = {
-            id: memberData[0].id,
-            name: profileData?.display_name || user.user_metadata?.name || 'You',
-            email: userData?.email || user.email || 'No email',
-            role: 'Creator',
-            avatar_url: profileData?.avatar_url || user.user_metadata?.avatar_url,
-            joined_at: memberData[0].joined_at || new Date().toISOString()
-          };
-
-          console.log("Created member object:", creatorMember);
-
-          setFamilyGroup({
-            id: familyData.id,
-            name: familyData.name,
-            created_at: familyData.created_at,
-            members: [creatorMember]
-          });
-
-          setIsCreator(true);
-          console.log("Family group state updated successfully");
-        } catch (error) {
-          console.error('Error fetching new family data:', error);
-          // If we can't fetch the data, just reload the page as fallback
-          console.log("Falling back to page reload");
-          window.location.reload();
-        }
-      };
-
-      await fetchNewFamilyData();
-    } catch (error) {
-      console.error('Error creating family:', error);
-      alert('Failed to create family group. Please try again.');
+      setIsCreator(true);
+    } catch (err: any) {
+      console.error('Error creating family:', err);
+      setError(err.message || 'Failed to create family group. Please try again.');
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   };
 
@@ -427,6 +274,7 @@ const FamilyPage: React.FC = () => {
     if (!confirm('Are you sure you want to remove this family member?')) return;
 
     try {
+      setError(null);
       const { error } = await supabase
         .from('family_members')
         .delete()
@@ -441,9 +289,9 @@ const FamilyPage: React.FC = () => {
           members: prev.members.filter(member => member.id !== memberId)
         };
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error removing member:', error);
-      alert('Failed to remove member. Please try again.');
+      setError(error.message || 'Failed to remove member. Please try again.');
     }
   };
 
@@ -452,24 +300,31 @@ const FamilyPage: React.FC = () => {
     if (!familyGroup) return;
 
     setInviting(true);
+    setError(null);
     try {
-      // First check if user exists
-      const { data: userData, error: userError } = await supabase
-        .from('users')  // Changed from 'auth.users' to 'users'
+      // Look for the user by email
+      const { data: users, error: usersError } = await supabase
+        .from('auth.users')
         .select('id')
-        .eq('email', inviteEmail)
-        .single();
+        .eq('email', inviteEmail);
 
-      if (userError || !userData) {
+      if (usersError) {
+        console.error("Error finding user:", usersError);
+        throw new Error('Unable to look up user. Please check the email address.');
+      }
+
+      if (!users || users.length === 0) {
         throw new Error('User not found. Please check the email address.');
       }
+
+      const userId = users[0].id;
 
       // Check if user is already a member
       const { data: existingMember, error: memberError } = await supabase
         .from('family_members')
         .select('id')
         .eq('family_id', familyGroup.id)
-        .eq('user_id', userData.id);
+        .eq('user_id', userId);
 
       if (existingMember && existingMember.length > 0) {
         throw new Error('This user is already a member of the family.');
@@ -481,7 +336,7 @@ const FamilyPage: React.FC = () => {
         .insert([
           {
             family_id: familyGroup.id,
-            user_id: userData.id,
+            user_id: userId,
             role: inviteRole
           }
         ]);
@@ -490,13 +345,33 @@ const FamilyPage: React.FC = () => {
 
       setInviteEmail('');
       setShowInviteForm(false);
-      alert('Member added successfully!');
       
-      // Refresh the page to show the new member
-      window.location.reload();
+      // Instead of reloading the page, fetch the user profile and add them to state
+      const { data: profileData } = await supabase
+        .from('user_profiles')
+        .select('display_name, avatar_url')
+        .eq('user_id', userId)
+        .single();
+
+      // Update the family group with the new member
+      setFamilyGroup(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          members: [...prev.members, {
+            id: Math.random().toString(), // Temporary ID until page refresh
+            name: profileData?.display_name || inviteEmail.split('@')[0],
+            email: inviteEmail,
+            role: inviteRole,
+            avatar_url: profileData?.avatar_url,
+            joined_at: new Date().toISOString()
+          }]
+        };
+      });
+      
     } catch (error: any) {
       console.error('Error inviting member:', error);
-      alert(error.message || 'Failed to add member. Please try again.');
+      setError(error.message || 'Failed to add member. Please try again.');
     } finally {
       setInviting(false);
     }
@@ -524,6 +399,18 @@ const FamilyPage: React.FC = () => {
           </button>
         )}
       </div>
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+          <span className="block sm:inline">{error}</span>
+          <span className="absolute top-0 bottom-0 right-0 px-4 py-3" onClick={() => setError(null)}>
+            <svg className="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+              <title>Close</title>
+              <path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z"/>
+            </svg>
+          </span>
+        </div>
+      )}
 
       {familyGroup ? (
         <div className="bg-white rounded-xl shadow-md p-6">
@@ -568,10 +455,15 @@ const FamilyPage: React.FC = () => {
           </p>
           <button 
             onClick={handleCreateFamily}
+            disabled={creating}
             className="btn-primary inline-flex items-center"
           >
-            <Plus size={18} className="mr-2" />
-            Create Family Group
+            {creating ? (
+              <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white mr-2"></div>
+            ) : (
+              <Plus size={18} className="mr-2" />
+            )}
+            {creating ? 'Creating...' : 'Create Family Group'}
           </button>
         </div>
       )}

@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { PlusCircle, BookOpen, Users, Sparkles, Mic, Camera, Share2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const FeatureCard: React.FC<{ 
   icon: React.ReactNode;
@@ -26,7 +27,45 @@ const FeatureCard: React.FC<{
 
 const HomePage: React.FC = () => {
   const { user } = useAuth();
-  const firstName = user?.email?.split('@')[0] || 'there';
+  const [displayName, setDisplayName] = useState<string>('there');
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    async function fetchUserProfile() {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        // Fetch the user's profile from the database
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('display_name')
+          .eq('user_id', user.id)
+          .single();
+
+        if (error) {
+          console.error('Error fetching user profile:', error);
+          // Fallback to email if there's an error
+          setDisplayName(user.email?.split('@')[0] || 'there');
+        } else if (data) {
+          // Use the display name from the profile
+          setDisplayName(data.display_name);
+        } else {
+          // Fallback to email if no profile found
+          setDisplayName(user.email?.split('@')[0] || 'there');
+        }
+      } catch (err) {
+        console.error('Error in fetchUserProfile:', err);
+        setDisplayName(user.email?.split('@')[0] || 'there');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchUserProfile();
+  }, [user]);
 
   const features = [
     {
@@ -71,7 +110,11 @@ const HomePage: React.FC = () => {
       >
         <div className="max-w-3xl">
           <h1 className="text-4xl md:text-5xl font-bold text-primary-800 mb-4">
-            Welcome back, {firstName}!
+            {loading ? (
+              <div className="h-12 w-64 bg-primary-200 animate-pulse rounded"></div>
+            ) : (
+              `Welcome back, ${displayName}!`
+            )}
           </h1>
           <p className="text-lg md:text-xl text-gray-700 mb-8">
             Connect with your family through the power of storytelling. Create, share, and preserve your family's unique stories for generations to come.
@@ -133,6 +176,30 @@ const HomePage: React.FC = () => {
           </Link>
         </div>
       </motion.section>
+      
+      {!user?.email?.includes('@') && (
+        <motion.section 
+          className="bg-yellow-50 rounded-2xl p-8 border border-yellow-100"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.5 }}
+        >
+          <div className="flex flex-col md:flex-row items-center justify-between">
+            <div className="mb-6 md:mb-0 md:mr-8">
+              <h2 className="text-2xl font-bold text-yellow-800 mb-2">Complete Your Profile</h2>
+              <p className="text-yellow-700">
+                Update your profile information to personalize your experience.
+              </p>
+            </div>
+            <Link 
+              to="/profile" 
+              className="btn bg-yellow-500 text-white hover:bg-yellow-600 focus:ring-yellow-400"
+            >
+              Update Profile
+            </Link>
+          </div>
+        </motion.section>
+      )}
     </div>
   );
 };

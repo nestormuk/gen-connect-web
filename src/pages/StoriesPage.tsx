@@ -83,50 +83,126 @@ const StoriesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('updated_at');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStories = async () => {
       try {
-        if (!user) return;
+        if (!user) {
+          setLoading(false);
+          return;
+        }
 
+        console.log("Fetching stories for user:", user.id);
+
+        // Method 1: Get stories user has created - without trying to join with user_profiles
+        const { data: createdStories, error: createdError } = await supabase
+          .from('stories')
+          .select('*')
+          .eq('created_by', user.id)
+          .order('updated_at', { ascending: false });
+
+        if (createdError) {
+          console.error("Error fetching created stories:", createdError);
+          setError("Error loading stories: " + createdError.message);
+        }
+
+        // Method 2: Get stories from families the user belongs to
         // First, get the user's family IDs
         const { data: familyData, error: familyError } = await supabase
           .from('family_members')
           .select('family_id')
           .eq('user_id', user.id);
 
-        if (familyError) throw familyError;
-
-        if (!familyData?.length) {
-          setLoading(false);
-          return;
+        if (familyError) {
+          console.error("Error fetching family memberships:", familyError);
+          setError("Error loading family data: " + familyError.message);
         }
 
-        const familyIds = familyData.map(f => f.family_id);
+        let familyStories: any[] = [];
+        
+        if (familyData && familyData.length > 0) {
+          const familyIds = familyData.map(f => f.family_id);
+          console.log("User belongs to family IDs:", familyIds);
 
-        // Then fetch stories for those families
-        const { data: storiesData, error: storiesError } = await supabase
-          .from('stories')
-          .select(`
-            *,
-            user_profiles!stories_created_by_fkey (
-              display_name
-            )
-          `)
-          .in('family_id', familyIds)
-          .order('updated_at', { ascending: false });
+          // Then fetch stories for those families - without trying to join with user_profiles
+          const { data: familyStoriesData, error: storiesError } = await supabase
+            .from('stories')
+            .select('*')
+            .in('family_id', familyIds)
+            .order('updated_at', { ascending: false });
 
-        if (storiesError) throw storiesError;
+          if (storiesError) {
+            console.error("Error fetching family stories:", storiesError);
+            setError("Error loading family stories: " + storiesError.message);
+          } else {
+            familyStories = familyStoriesData || [];
+          }
+        }
 
-        const formattedStories = storiesData.map(story => ({
+        // Method 3: Get stories user is collaborating on
+        const { data: collaborations, error: collabError } = await supabase
+          .from('story_collaborators')
+          .select('story_id')
+          .eq('user_id', user.id);
+
+        if (collabError) {
+          console.error("Error fetching collaborations:", collabError);
+        }
+
+        let collaborativeStories: any[] = [];
+        
+        if (collaborations && collaborations.length > 0) {
+          const storyIds = collaborations.map(c => c.story_id);
+          console.log("User is collaborating on story IDs:", storyIds);
+
+          const { data: collabStoriesData, error: collabStoriesError } = await supabase
+            .from('stories')
+            .select('*')
+            .in('id', storyIds)
+            .order('updated_at', { ascending: false });
+
+          if (collabStoriesError) {
+            console.error("Error fetching collaborative stories:", collabStoriesError);
+          } else {
+            collaborativeStories = collabStoriesData || [];
+          }
+        }
+
+        // Combine all stories and remove duplicates
+        const allStories = [...(createdStories || []), ...familyStories, ...collaborativeStories];
+        const uniqueStories = Array.from(new Map(allStories.map(story => [story.id, story])).values());
+
+        console.log(`Found ${uniqueStories.length} total stories`);
+
+        // Get creator names in a separate query
+        const creatorIds = Array.from(new Set(uniqueStories.map(story => story.created_by)));
+        let creatorNames: Record<string, string> = {};
+        
+        if (creatorIds.length > 0) {
+          const { data: profiles, error: profilesError } = await supabase
+            .from('user_profiles')
+            .select('user_id, display_name')
+            .in('user_id', creatorIds);
+            
+          if (!profilesError && profiles) {
+            profiles.forEach(profile => {
+              creatorNames[profile.user_id] = profile.display_name;
+            });
+          }
+        }
+
+        // Format the stories with creator names
+        const formattedStories = uniqueStories.map(story => ({
           ...story,
-          creator_name: story.user_profiles?.display_name
+          creator_name: creatorNames[story.created_by] || 'Unknown'
         }));
 
         setStories(formattedStories);
-        setLoading(false);
-      } catch (error) {
-        console.error('Error fetching stories:', error);
+      } catch (error: any) {
+        console.error('Error in fetchStories:', error);
+        setError(error.message || 'An unexpected error occurred');
+      } finally {
         setLoading(false);
       }
     };
@@ -186,6 +262,12 @@ const StoriesPage: React.FC = () => {
           </select>
         </div>
       </div>
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-12">

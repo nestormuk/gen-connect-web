@@ -40,7 +40,7 @@ function App() {
         <Route index element={<HomePage />} />
         <Route path="stories" element={<StoriesPage />} />
         <Route path="stories/new" element={<StoryEditorPage />} />
-        <Route path="stories/:id" element={<StoryDetailsPage />} />
+        <Route path="/stories/:storyId" element={<StoryDetailsPage />} />
         <Route path="stories/:id/edit" element={<StoryEditorPage />} />
         <Route path="family" element={<FamilyPage />} />
         <Route path="profile" element={<ProfilePage />} />
