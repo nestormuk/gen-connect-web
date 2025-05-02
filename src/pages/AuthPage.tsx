@@ -78,7 +78,7 @@ const AuthPage: React.FC = () => {
         <div className="bg-primary-600 text-white p-8 md:p-12 md:w-1/2 flex flex-col justify-center">
           <div className="flex items-center space-x-3 mb-8">
             <BookOpen className="h-10 w-10" />
-            <h1 className="text-3xl font-bold">Family Tales</h1>
+            <h1 className="text-3xl font-bold">GenConnect</h1>
           </div>
           <h2 className="text-2xl md:text-3xl font-bold mb-4">Connect Generations Through Stories</h2>
           <p className="text-primary-100 mb-6">

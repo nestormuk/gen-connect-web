@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { X, Home, BookOpen, Users, Settings } from 'lucide-react';
+import { X, Home, BookOpen, Users, Settings, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SidebarProps {
@@ -18,7 +18,8 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { name: 'Home', path: '/', icon: <Home size={20} /> },
     { name: 'Stories', path: '/stories', icon: <BookOpen size={20} /> },
     { name: 'Family', path: '/family', icon: <Users size={20} /> },
-    { name: 'Settings', path: '/profile', icon: <Settings size={20} /> }
+    { name: 'Settings', path: '/profile', icon: <Settings size={20} /> },
+    { name: 'My Invitations', path: '/my-invitations', icon: <Mail size={20} /> }
   ];
 
   // If the sidebar is open on mobile, close it when clicking outside

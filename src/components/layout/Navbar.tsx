@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { BookOpen, Menu, Bell, User, LogOut } from 'lucide-react';
+import { BookOpen, Menu, Bell, User, LogOut, Mail } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { motion } from 'framer-motion';
 import { supabase } from '../../lib/supabase';
@@ -15,6 +15,8 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [displayName, setDisplayName] = useState<string>('User');
   const [loading, setLoading] = useState<boolean>(true);
+  // Add this state for tracking invitations count
+  const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
 
   useEffect(() => {
     async function fetchUserProfile() {
@@ -53,6 +55,44 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
     fetchUserProfile();
   }, [user]);
 
+  // Add this useEffect to fetch pending invitations
+  useEffect(() => {
+    const fetchPendingInvitations = async () => {
+      if (!user || !user.email) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from('family_invitations')
+          .select('id')
+          .ilike('email', user.email.toLowerCase().trim())
+          .eq('accepted', false);
+          
+        if (error) throw error;
+        
+        setPendingInvitationsCount(data?.length || 0);
+      } catch (error) {
+        console.error('Error checking pending invitations:', error);
+      }
+    };
+    
+    fetchPendingInvitations();
+    
+    // Set up real-time subscription for invitations
+    const subscription = supabase
+      .channel('public:family_invitations')
+      .on('INSERT', (payload) => {
+        // Check if the invitation is for the current user
+        if (payload.new && payload.new.email === user?.email) {
+          setPendingInvitationsCount(prev => prev + 1);
+        }
+      })
+      .subscribe();
+      
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [user]);
+
   const handleSignOut = async () => {
     try {
       await signOut();
@@ -88,6 +128,21 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
           </div>
           
           <div className="flex items-center space-x-4">
+            {/* Add My Invitations link and badge here */}
+            {user && (
+              <Link 
+                to="/my-invitations" 
+                className="p-2 rounded-full text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 relative"
+              >
+                <Mail size={20} />
+                {pendingInvitationsCount > 0 && (
+                  <span className="absolute top-0 right-0 bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                    {pendingInvitationsCount}
+                  </span>
+                )}
+              </Link>
+            )}
+            
             <button className="p-2 rounded-full text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500">
               <Bell size={20} />
             </button>
@@ -123,6 +178,24 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
                   >
                     Your Profile
                   </Link>
+                  
+                  {/* Add My Invitations link to dropdown menu */}
+                  <Link 
+                    to="/my-invitations" 
+                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center justify-between"
+                    onClick={() => setShowUserMenu(false)}
+                  >
+                    <div className="flex items-center space-x-2">
+                      <Mail size={16} />
+                      <span>My Invitations</span>
+                    </div>
+                    {pendingInvitationsCount > 0 && (
+                      <span className="bg-red-500 text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                        {pendingInvitationsCount}
+                      </span>
+                    )}
+                  </Link>
+                  
                   <button 
                     className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                     onClick={handleSignOut}
