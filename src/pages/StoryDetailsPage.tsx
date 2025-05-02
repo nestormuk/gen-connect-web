@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, Edit, Clock, User, Share2, Trash2, Download, 
-  BookOpen, Camera, Mic, Headphones, MessageCircle
+  BookOpen, Camera, Mic, Headphones, MessageCircle, Plus
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { supabase } from '../lib/supabase';
@@ -38,6 +38,7 @@ const StoryDetailPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [currentTab, setCurrentTab] = useState('story');
   const [isCreator, setIsCreator] = useState(false);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
 
   useEffect(() => {
     const fetchStoryDetails = async () => {
@@ -145,57 +146,47 @@ const StoryDetailPage: React.FC = () => {
     fetchStoryDetails();
   }, [storyId, user]);
 
+  const forceDelete = async () => {
+    if (!story) return;
+    
+    try {
+      // Try direct deletion with service role if possible
+      const { error } = await supabase.from('stories').delete().eq('id', story.id);
+      
+      if (error) {
+        console.error("Direct deletion error:", error);
+        alert("Error: " + error.message);
+      } else {
+        alert("Story deleted!");
+        navigate('/stories', { replace: true });
+      }
+    } catch (err) {
+      console.error("Force delete error:", err);
+      alert("Exception: " + err.message);
+    }
+  };
+
   const handleDeleteStory = async () => {
     if (!story || !isCreator) return;
     
-    if (!window.confirm("Are you sure you want to delete this story? This action cannot be undone.")) {
-      return;
-    }
+    if (!window.confirm("Are you sure you want to delete this story?")) return;
+    
+    setLoading(true);
     
     try {
-      setLoading(true);
-      
-      // Delete related media first
-      if (story.media && story.media.length > 0) {
-        const { error: mediaDeleteError } = await supabase
-          .from('story_media')
-          .delete()
-          .eq('story_id', story.id);
-          
-        if (mediaDeleteError) {
-          console.error("Error deleting story media:", mediaDeleteError);
-          throw mediaDeleteError;
-        }
-      }
-      
-      // Delete collaborators
-      const { error: collabDeleteError } = await supabase
-        .from('story_collaborators')
-        .delete()
-        .eq('story_id', story.id);
-        
-      if (collabDeleteError) {
-        console.error("Error deleting collaborators:", collabDeleteError);
-        throw collabDeleteError;
-      }
-      
-      // Delete the story
-      const { error: storyDeleteError } = await supabase
+      const { error } = await supabase
         .from('stories')
         .delete()
         .eq('id', story.id);
         
-      if (storyDeleteError) {
-        console.error("Error deleting story:", storyDeleteError);
-        throw storyDeleteError;
-      }
+      if (error) throw error;
       
-      // Redirect to stories list
-      navigate('/stories');
-      
-    } catch (err: any) {
+      alert("Story deleted successfully!");
+      navigate('/stories', { replace: true });
+    } catch (err) {
       console.error("Error deleting story:", err);
-      setError(err.message || "Failed to delete the story");
+      setError("Failed to delete story. Please try again.");
+    } finally {
       setLoading(false);
     }
   };
@@ -243,126 +234,122 @@ const StoryDetailPage: React.FC = () => {
     }
   };
 
-  // Render story content from JSON
-  // Updated renderStoryContent function for your specific content structure
-const renderStoryContent = () => {
-  if (!story?.content) {
-    console.log("No content found in story");
-    return <p className="text-gray-500 italic">This story has no content yet.</p>;
-  }
-  
-  console.log("Content type:", typeof story.content);
-  console.log("Content value:", story.content);
-  
-  // First try to parse if it's a JSON string (from JSONB field in Postgres)
-  let parsedContent = story.content;
-  if (typeof story.content === 'string') {
-    try {
-      parsedContent = JSON.parse(story.content);
-      console.log("Successfully parsed string to:", parsedContent);
-    } catch (e) {
-      console.log("Not a valid JSON string or already parsed");
-      // If it's not a valid JSON string, keep it as is
+  const renderStoryContent = () => {
+    if (!story?.content) {
+      console.log("No content found in story");
+      return <p className="text-gray-500 italic">This story has no content yet.</p>;
     }
-  }
-  
-  // Handle your specific content structure: {"blocks": [{"id": "block-id", "type": "text", "content": "content text"}]}
-  if (parsedContent.blocks && Array.isArray(parsedContent.blocks)) {
-    console.log("Found custom blocks array with content property");
     
+    console.log("Content type:", typeof story.content);
+    
+    // First try to parse if it's a JSON string (from JSONB field in Postgres)
+    let parsedContent = story.content;
+    if (typeof story.content === 'string') {
+      try {
+        parsedContent = JSON.parse(story.content);
+        console.log("Successfully parsed string to JSON");
+      } catch (e) {
+        console.log("Not a valid JSON string or already parsed");
+        // If it's not a valid JSON string, keep it as is
+      }
+    }
+    
+    // Handle your specific content structure: {"blocks": [{"id": "block-id", "type": "text", "content": "content text"}]}
+    if (parsedContent.blocks && Array.isArray(parsedContent.blocks)) {
+      console.log("Found custom blocks array with content property");
+      
+      return (
+        <div className="space-y-4">
+          {parsedContent.blocks.map((block: any, index: number) => {
+            // Handle different block types
+            switch (block.type) {
+              case 'text':
+                return <p key={block.id || index} className="mb-4">{block.content}</p>;
+                
+              case 'heading':
+                return <h2 key={block.id || index} className="text-2xl font-bold mb-4">{block.content}</h2>;
+                
+              case 'image':
+                return (
+                  <div key={block.id || index} className="mb-6">
+                    <img 
+                      src={block.content} 
+                      alt="Story image" 
+                      className="w-full rounded-lg shadow-md"
+                    />
+                    {block.caption && (
+                      <p className="text-sm text-gray-500 mt-2 text-center">{block.caption}</p>
+                    )}
+                  </div>
+                );
+                
+              default:
+                return <p key={block.id || index} className="mb-4">{block.content || JSON.stringify(block)}</p>;
+            }
+          })}
+        </div>
+      );
+    }
+    
+    // Previous handlers for other content formats
+    
+    // Case 1: Content with editor.js style blocks
+    if (parsedContent.blocks) {
+      return parsedContent.blocks.map((block: any, index: number) => {
+        switch (block.type) {
+          case 'header':
+            return <h2 key={index} className="text-2xl font-bold mb-4">{block.data.text}</h2>;
+          case 'paragraph':
+            return <p key={index} className="mb-4">{block.data.text}</p>;
+          case 'image':
+            return (
+              <div key={index} className="mb-6">
+                <img 
+                  src={block.data.url} 
+                  alt={block.data.caption || 'Story image'} 
+                  className="w-full rounded-lg shadow-md"
+                />
+                {block.data.caption && (
+                  <p className="text-sm text-gray-500 mt-2 text-center">{block.data.caption}</p>
+                )}
+              </div>
+            );
+          default:
+            return <p key={index} className="mb-4">{JSON.stringify(block.data)}</p>;
+        }
+      });
+    }
+    
+    // Case 2: Simple text property
+    if (parsedContent.text) {
+      return <div className="prose max-w-none">{parsedContent.text}</div>;
+    }
+    
+    // Case 3: Content with sections
+    if (parsedContent.sections) {
+      return parsedContent.sections.map((section: any, index: number) => (
+        <div key={index} className="mb-8">
+          {section.title && <h2 className="text-2xl font-bold mb-4">{section.title}</h2>}
+          <div className="prose max-w-none">
+            {section.text && <p>{section.text}</p>}
+          </div>
+        </div>
+      ));
+    }
+    
+    // Case 4: HTML string (if stored directly as HTML)
+    if (typeof parsedContent === 'string') {
+      return <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: parsedContent }} />;
+    }
+    
+    // Fallback for unknown formats
     return (
-      <div className="space-y-4">
-        {parsedContent.blocks.map((block: any, index: number) => {
-          // Handle different block types
-          switch (block.type) {
-            case 'text':
-              return <p key={block.id || index} className="mb-4">{block.content}</p>;
-              
-            case 'heading':
-              return <h2 key={block.id || index} className="text-2xl font-bold mb-4">{block.content}</h2>;
-              
-            case 'image':
-              return (
-                <div key={block.id || index} className="mb-6">
-                  <img 
-                    src={block.content} 
-                    alt="Story image" 
-                    className="w-full rounded-lg shadow-md"
-                  />
-                  {block.caption && (
-                    <p className="text-sm text-gray-500 mt-2 text-center">{block.caption}</p>
-                  )}
-                </div>
-              );
-              
-            default:
-              return <p key={block.id || index} className="mb-4">{block.content || JSON.stringify(block)}</p>;
-          }
-        })}
+      <div>
+        <p className="mb-4 text-gray-500 italic">Content format not recognized. Raw content:</p>
+        <pre className="bg-gray-50 p-4 rounded overflow-auto">{JSON.stringify(parsedContent, null, 2)}</pre>
       </div>
     );
-  }
-  
-  // Previous handlers for other content formats
-  
-  // Case 1: Content with editor.js style blocks
-  if (parsedContent.blocks) {
-    return parsedContent.blocks.map((block: any, index: number) => {
-      switch (block.type) {
-        case 'header':
-          return <h2 key={index} className="text-2xl font-bold mb-4">{block.data.text}</h2>;
-        case 'paragraph':
-          return <p key={index} className="mb-4">{block.data.text}</p>;
-        case 'image':
-          return (
-            <div key={index} className="mb-6">
-              <img 
-                src={block.data.url} 
-                alt={block.data.caption || 'Story image'} 
-                className="w-full rounded-lg shadow-md"
-              />
-              {block.data.caption && (
-                <p className="text-sm text-gray-500 mt-2 text-center">{block.data.caption}</p>
-              )}
-            </div>
-          );
-        default:
-          return <p key={index} className="mb-4">{JSON.stringify(block.data)}</p>;
-      }
-    });
-  }
-  
-  // Case 2: Simple text property
-  if (parsedContent.text) {
-    return <div className="prose max-w-none">{parsedContent.text}</div>;
-  }
-  
-  // Case 3: Content with sections
-  if (parsedContent.sections) {
-    return parsedContent.sections.map((section: any, index: number) => (
-      <div key={index} className="mb-8">
-        {section.title && <h2 className="text-2xl font-bold mb-4">{section.title}</h2>}
-        <div className="prose max-w-none">
-          {section.text && <p>{section.text}</p>}
-        </div>
-      </div>
-    ));
-  }
-  
-  // Case 4: HTML string (if stored directly as HTML)
-  if (typeof parsedContent === 'string') {
-    return <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: parsedContent }} />;
-  }
-  
-  // Fallback for unknown formats
-  return (
-    <div>
-      <p className="mb-4 text-gray-500 italic">Content format not recognized. Raw content:</p>
-      <pre className="bg-gray-50 p-4 rounded overflow-auto">{JSON.stringify(parsedContent, null, 2)}</pre>
-    </div>
-  );
-};
-
+  };
 
   if (loading) {
     return (
@@ -428,7 +415,7 @@ const renderStoryContent = () => {
                 Edit
               </Link>
               <button 
-                onClick={handleDeleteStory} 
+                onClick={forceDelete} 
                 className="btn-outline text-error-600 border-error-300 hover:bg-error-50"
               >
                 <Trash2 size={16} className="mr-2" />
@@ -528,7 +515,7 @@ const renderStoryContent = () => {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.3 }}
           >
-            {story.media && story.media.length > 0 ? (
+            {story.media && story.media.filter(m => m.media_type === 'image').length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {story.media
                   .filter(m => m.media_type === 'image')
