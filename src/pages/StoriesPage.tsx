@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, BookOpen, Search, Filter, Clock, Star } from 'lucide-react';
+import { Plus, BookOpen, Search, Filter, Clock, Star, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,6 +13,14 @@ interface Story {
   cover_image: string | null;
   created_by: string;
   creator_name?: string;
+  creator_email?: string;
+  family_id: string;
+  family_name?: string;
+}
+
+interface Family {
+  id: string;
+  name: string;
 }
 
 const StoryCard: React.FC<{ story: Story }> = ({ story }) => {
@@ -40,18 +48,33 @@ const StoryCard: React.FC<{ story: Story }> = ({ story }) => {
           <h3 className="font-semibold text-lg mb-2 text-gray-800 group-hover:text-primary-600 transition-colors">
             {story.title}
           </h3>
-          <div className="text-sm text-gray-500 mt-auto flex items-center">
-            <Clock size={14} className="mr-1" />
-            <span>
-              {new Date(story.updated_at).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
-              })}
-            </span>
-            {story.creator_name && (
-              <span className="ml-auto text-primary-600">{story.creator_name}</span>
-            )}
+          <div className="text-sm text-gray-500 mb-2">
+            <div className="flex items-center">
+              <Clock size={14} className="mr-1" />
+              <span>
+                {new Date(story.updated_at).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric'
+                })}
+              </span>
+            </div>
+          </div>
+          
+          {/* Display creator info */}
+          <div className="mt-auto">
+            <div className="text-sm flex items-center justify-between">
+              <span className="text-primary-600 font-medium">
+                {story.creator_name || story.creator_email || 'Unknown'}
+              </span>
+              
+              {story.family_name && (
+                <span className="text-gray-500 flex items-center">
+                  <Users size={14} className="mr-1" />
+                  {story.family_name}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </motion.div>
@@ -80,13 +103,49 @@ const EmptyState: React.FC = () => {
 const StoriesPage: React.FC = () => {
   const { user } = useAuth();
   const [stories, setStories] = useState<Story[]>([]);
+  const [families, setFamilies] = useState<Family[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('updated_at');
+  const [filterByFamily, setFilterByFamily] = useState<string>('all');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchStories = async () => {
+    const fetchUserFamilies = async () => {
+      if (!user) return [];
+      
+      try {
+        // Get the families the user belongs to
+        const { data: familyMemberships, error: membershipError } = await supabase
+          .from('family_members')
+          .select('family_id')
+          .eq('user_id', user.id);
+          
+        if (membershipError) throw membershipError;
+        
+        if (!familyMemberships || familyMemberships.length === 0) {
+          return [];
+        }
+        
+        const familyIds = familyMemberships.map(fm => fm.family_id);
+        
+        // Get family names
+        const { data: familyData, error: familyError } = await supabase
+          .from('family_groups')
+          .select('id, name')
+          .in('id', familyIds);
+          
+        if (familyError) throw familyError;
+        
+        setFamilies(familyData || []);
+        return familyIds;
+      } catch (err) {
+        console.error('Error fetching user families:', err);
+        return [];
+      }
+    };
+
+    const fetchAllFamilyStories = async () => {
       try {
         if (!user) {
           setLoading(false);
@@ -94,126 +153,113 @@ const StoriesPage: React.FC = () => {
         }
 
         console.log("Fetching stories for user:", user.id);
-
-        // Method 1: Get stories user has created - without trying to join with user_profiles
-        const { data: createdStories, error: createdError } = await supabase
+        const familyIds = await fetchUserFamilies();
+        
+        if (familyIds.length === 0) {
+          // If user isn't in any families, just get their own stories
+          const { data: ownStories, error: ownStoriesError } = await supabase
+            .from('stories')
+            .select('*')
+            .eq('created_by', user.id)
+            .order('updated_at', { ascending: false });
+            
+          if (ownStoriesError) throw ownStoriesError;
+          setStories(ownStories || []);
+          return;
+        }
+        
+        // Get all stories from all families the user belongs to
+        const { data: familyStories, error: familyStoriesError } = await supabase
           .from('stories')
           .select('*')
-          .eq('created_by', user.id)
+          .in('family_id', familyIds)
           .order('updated_at', { ascending: false });
-
-        if (createdError) {
-          console.error("Error fetching created stories:", createdError);
-          setError("Error loading stories: " + createdError.message);
-        }
-
-        // Method 2: Get stories from families the user belongs to
-        // First, get the user's family IDs
-        const { data: familyData, error: familyError } = await supabase
-          .from('family_members')
-          .select('family_id')
-          .eq('user_id', user.id);
-
-        if (familyError) {
-          console.error("Error fetching family memberships:", familyError);
-          setError("Error loading family data: " + familyError.message);
-        }
-
-        let familyStories: any[] = [];
+          
+        if (familyStoriesError) throw familyStoriesError;
         
-        if (familyData && familyData.length > 0) {
-          const familyIds = familyData.map(f => f.family_id);
-          console.log("User belongs to family IDs:", familyIds);
-
-          // Then fetch stories for those families - without trying to join with user_profiles
-          const { data: familyStoriesData, error: storiesError } = await supabase
-            .from('stories')
-            .select('*')
-            .in('family_id', familyIds)
-            .order('updated_at', { ascending: false });
-
-          if (storiesError) {
-            console.error("Error fetching family stories:", storiesError);
-            setError("Error loading family stories: " + storiesError.message);
-          } else {
-            familyStories = familyStoriesData || [];
-          }
+        if (!familyStories || familyStories.length === 0) {
+          setStories([]);
+          setLoading(false);
+          return;
         }
 
-        // Method 3: Get stories user is collaborating on
-        const { data: collaborations, error: collabError } = await supabase
-          .from('story_collaborators')
-          .select('story_id')
-          .eq('user_id', user.id);
-
-        if (collabError) {
-          console.error("Error fetching collaborations:", collabError);
-        }
-
-        let collaborativeStories: any[] = [];
+        // Get creator info
+        const creatorIds = Array.from(new Set(familyStories.map(story => story.created_by)));
+        let creatorInfo: Record<string, { name?: string, email?: string }> = {};
         
-        if (collaborations && collaborations.length > 0) {
-          const storyIds = collaborations.map(c => c.story_id);
-          console.log("User is collaborating on story IDs:", storyIds);
-
-          const { data: collabStoriesData, error: collabStoriesError } = await supabase
-            .from('stories')
-            .select('*')
-            .in('id', storyIds)
-            .order('updated_at', { ascending: false });
-
-          if (collabStoriesError) {
-            console.error("Error fetching collaborative stories:", collabStoriesError);
-          } else {
-            collaborativeStories = collabStoriesData || [];
-          }
+        // Get profile names for creators
+        const { data: profiles, error: profilesError } = await supabase
+          .from('user_profiles')
+          .select('user_id, display_name')
+          .in('user_id', creatorIds);
+          
+        if (!profilesError && profiles) {
+          profiles.forEach(profile => {
+            creatorInfo[profile.user_id] = {
+              name: profile.display_name
+            };
+          });
         }
-
-        // Combine all stories and remove duplicates
-        const allStories = [...(createdStories || []), ...familyStories, ...collaborativeStories];
-        const uniqueStories = Array.from(new Map(allStories.map(story => [story.id, story])).values());
-
-        console.log(`Found ${uniqueStories.length} total stories`);
-
-        // Get creator names in a separate query
-        const creatorIds = Array.from(new Set(uniqueStories.map(story => story.created_by)));
-        let creatorNames: Record<string, string> = {};
         
-        if (creatorIds.length > 0) {
-          const { data: profiles, error: profilesError } = await supabase
-            .from('user_profiles')
-            .select('user_id, display_name')
-            .in('user_id', creatorIds);
-            
-          if (!profilesError && profiles) {
-            profiles.forEach(profile => {
-              creatorNames[profile.user_id] = profile.display_name;
-            });
-          }
+        // Get emails from invitations for creators
+        const { data: invitations, error: invitationsError } = await supabase
+          .from('family_invitations')
+          .select('user_id, email')
+          .in('user_id', creatorIds)
+          .eq('accepted', true);
+          
+        if (!invitationsError && invitations) {
+          invitations.forEach(invitation => {
+            if (invitation.user_id) {
+              if (!creatorInfo[invitation.user_id]) {
+                creatorInfo[invitation.user_id] = {};
+              }
+              creatorInfo[invitation.user_id].email = invitation.email;
+            }
+          });
         }
-
-        // Format the stories with creator names
-        const formattedStories = uniqueStories.map(story => ({
+        
+        // Get family names
+        const { data: familyGroups, error: familyGroupsError } = await supabase
+          .from('family_groups')
+          .select('id, name')
+          .in('id', familyIds);
+          
+        const familyNames: Record<string, string> = {};
+        if (!familyGroupsError && familyGroups) {
+          familyGroups.forEach(family => {
+            familyNames[family.id] = family.name;
+          });
+        }
+        
+        // Format stories with creator info and family names
+        const formattedStories = familyStories.map(story => ({
           ...story,
-          creator_name: creatorNames[story.created_by] || 'Unknown'
+          creator_name: creatorInfo[story.created_by]?.name,
+          creator_email: creatorInfo[story.created_by]?.email,
+          family_name: familyNames[story.family_id]
         }));
-
+        
         setStories(formattedStories);
       } catch (error: any) {
-        console.error('Error in fetchStories:', error);
+        console.error('Error in fetchAllFamilyStories:', error);
         setError(error.message || 'An unexpected error occurred');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchStories();
+    fetchAllFamilyStories();
   }, [user]);
 
-  const filteredStories = stories.filter(story => 
-    story.title.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter stories based on search term and selected family
+  const filteredStories = stories.filter(story => {
+    const matchesSearch = story.title.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFamily = filterByFamily === 'all' || story.family_id === filterByFamily;
+    return matchesSearch && matchesFamily;
+  });
 
+  // Sort stories based on selected sort option
   const sortedStories = [...filteredStories].sort((a, b) => {
     if (sortBy === 'title') {
       return a.title.localeCompare(b.title);
@@ -248,6 +294,29 @@ const StoriesPage: React.FC = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
+        
+        {/* Family filter */}
+        {families.length > 0 && (
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Users className="h-5 w-5 text-gray-400" />
+            </div>
+            <select
+              className="input pl-10 pr-10 appearance-none bg-white"
+              value={filterByFamily}
+              onChange={(e) => setFilterByFamily(e.target.value)}
+            >
+              <option value="all">All Families</option>
+              {families.map(family => (
+                <option key={family.id} value={family.id}>
+                  {family.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        
+        {/* Sort option */}
         <div className="relative">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
             <Filter className="h-5 w-5 text-gray-400" />
