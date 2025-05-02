@@ -297,81 +297,56 @@ const FamilyPage: React.FC = () => {
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!familyGroup) return;
-
+    if (!familyGroup || !user) return;
+  
     setInviting(true);
     setError(null);
+    
     try {
-      // Look for the user by email
-      const { data: users, error: usersError } = await supabase
-        .from('auth.users')
-        .select('id')
-        .eq('email', inviteEmail);
-
-      if (usersError) {
-        console.error("Error finding user:", usersError);
-        throw new Error('Unable to look up user. Please check the email address.');
-      }
-
-      if (!users || users.length === 0) {
-        throw new Error('User not found. Please check the email address.');
-      }
-
-      const userId = users[0].id;
-
-      // Check if user is already a member
-      const { data: existingMember, error: memberError } = await supabase
-        .from('family_members')
-        .select('id')
-        .eq('family_id', familyGroup.id)
-        .eq('user_id', userId);
-
-      if (existingMember && existingMember.length > 0) {
-        throw new Error('This user is already a member of the family.');
-      }
-
-      // Add new member
-      const { error: inviteError } = await supabase
-        .from('family_members')
-        .insert([
-          {
-            family_id: familyGroup.id,
-            user_id: userId,
-            role: inviteRole
-          }
-        ]);
-
+      // Generate a unique invitation code
+      const invitationCode = Math.random().toString(36).substring(2, 10);
+      
+      // Save invitation to database
+      const { data: invitation, error: inviteError } = await supabase
+        .from('family_invitations')
+        .insert([{
+          family_id: familyGroup.id,
+          email: inviteEmail,
+          role: inviteRole,
+          invitation_code: invitationCode,
+          created_by: user.id
+        }])
+        .select();
+       
+        
       if (inviteError) throw inviteError;
-
+      
+      // Send email invitation
+      // Send email invitation using Supabase Edge Function
+      const { data, error: emailError } = await supabase.functions.invoke('send-email', {
+        body: { 
+          recipientEmail: inviteEmail, 
+          familyName: familyGroup.name, 
+          invitationCode, 
+          role: inviteRole 
+        }
+      });
+      const success = !emailError;
+      
+      if (!success) {
+        console.error('Error sending email:', emailError);
+        // Continue anyway, we'll show the link
+      }
+      
+      // Show success message
+      alert(`Invitation sent to ${inviteEmail}!`);
+      
       setInviteEmail('');
       setShowInviteForm(false);
       
-      // Instead of reloading the page, fetch the user profile and add them to state
-      const { data: profileData } = await supabase
-        .from('user_profiles')
-        .select('display_name, avatar_url')
-        .eq('user_id', userId)
-        .single();
-
-      // Update the family group with the new member
-      setFamilyGroup(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          members: [...prev.members, {
-            id: Math.random().toString(), // Temporary ID until page refresh
-            name: profileData?.display_name || inviteEmail.split('@')[0],
-            email: inviteEmail,
-            role: inviteRole,
-            avatar_url: profileData?.avatar_url,
-            joined_at: new Date().toISOString()
-          }]
-        };
-      });
-      
     } catch (error: any) {
-      console.error('Error inviting member:', error);
-      setError(error.message || 'Failed to add member. Please try again.');
+      console.error('Error creating invitation:', error);
+      setError(error.message || 'Failed to create invitation. Please try again.');
     } finally {
       setInviting(false);
     }

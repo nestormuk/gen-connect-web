@@ -10,6 +10,7 @@ import FamilyPage from './pages/FamilyPage';
 import ProfilePage from './pages/ProfilePage';
 import AuthPage from './pages/AuthPage';
 import NotFoundPage from './pages/NotFoundPage';
+import JoinFamilyPage from './pages/JoinFamilyPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -43,6 +44,7 @@ function App() {
         <Route path="/stories/:storyId" element={<StoryDetailsPage />} />
         <Route path="stories/:id/edit" element={<StoryEditorPage />} />
         <Route path="family" element={<FamilyPage />} />
+        <Route path="/join-family" element={<JoinFamilyPage />} />
         <Route path="profile" element={<ProfilePage />} />
       </Route>
       
