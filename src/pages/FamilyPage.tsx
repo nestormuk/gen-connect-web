@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Mail, Plus, Edit, Trash2, UserPlus } from 'lucide-react';
+import { Users, Mail, Plus, Edit, Trash2, UserPlus, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -18,6 +18,17 @@ interface FamilyGroup {
   name: string;
   created_at: string;
   members: FamilyMember[];
+}
+
+interface Invitation {
+  id: string;
+  family_id: string;
+  email: string;
+  role: string;
+  created_by: string;
+  created_at: string;
+  accepted: boolean;
+  user_id?: string; // Optional field for when invitation is accepted
 }
 
 const FamilyMemberCard: React.FC<{ 
@@ -60,8 +71,92 @@ const FamilyMemberCard: React.FC<{
   );
 };
 
+// Component to display all invitations (both pending and accepted)
+const InvitationsList: React.FC<{
+  pendingInvitations: Invitation[];
+  acceptedInvitations: Invitation[];
+  onCancel: (id: string) => void;
+}> = ({ pendingInvitations, acceptedInvitations, onCancel }) => {
+  const allInvitations = [...pendingInvitations, ...acceptedInvitations];
+  
+  if (!allInvitations || allInvitations.length === 0) return null;
+  
+  return (
+    <div className="mt-6">
+      <h3 className="text-lg font-semibold text-gray-700 mb-3">
+        Family Invitations ({allInvitations.length})
+      </h3>
+      
+      <div className="space-y-3">
+        {pendingInvitations.length > 0 && (
+          <div className="mb-2">
+            <h4 className="text-md font-medium text-gray-700 mb-2">Pending ({pendingInvitations.length})</h4>
+            <div className="space-y-2">
+              {pendingInvitations.map(invitation => (
+                <div 
+                  key={invitation.id} 
+                  className="bg-primary-50 rounded-lg p-4 flex items-center justify-between"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600">
+                      <Mail size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-gray-800">{invitation.email}</h4>
+                      <div className="flex items-center text-sm">
+                        <span className="text-primary-600">{invitation.role}</span>
+                        <span className="mx-1">•</span>
+                        <span className="text-gray-500">Pending</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <button 
+                    onClick={() => onCancel(invitation.id)} 
+                    className="p-2 text-gray-400 hover:text-error-600 rounded-full hover:bg-error-50"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
+        {acceptedInvitations.length > 0 && (
+          <div>
+            <h4 className="text-md font-medium text-gray-700 mb-2">Accepted ({acceptedInvitations.length})</h4>
+            <div className="space-y-2">
+              {acceptedInvitations.map(invitation => (
+                <div 
+                  key={invitation.id} 
+                  className="bg-green-50 rounded-lg p-4 flex items-center justify-between"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                      <Users size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-gray-800">{invitation.email}</h4>
+                      <div className="flex items-center text-sm">
+                        <span className="text-green-600">{invitation.role}</span>
+                        <span className="mx-1">•</span>
+                        <span className="text-gray-500">Joined</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const FamilyPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, checkPendingInvitations } = useAuth();
   const [familyGroup, setFamilyGroup] = useState<FamilyGroup | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -71,119 +166,210 @@ const FamilyPage: React.FC = () => {
   const [inviting, setInviting] = useState(false);
   const [isCreator, setIsCreator] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingInvitations, setPendingInvitations] = useState<Invitation[]>([]);
+  const [acceptedInvitations, setAcceptedInvitations] = useState<Invitation[]>([]);
 
-  useEffect(() => {
-    const fetchFamilyData = async () => {
-      if (!user) return;
+  // Function to fetch all invitations (both pending and accepted)
+  const fetchAllInvitations = async () => {
+    if (!familyGroup) return;
+    
+    try {
+      // Fetch pending invitations
+      const { data: pendingData, error: pendingError } = await supabase
+        .from('family_invitations')
+        .select('*')
+        .eq('family_id', familyGroup.id)
+        .eq('accepted', false);
+        
+      if (pendingError) throw pendingError;
+      
+      // Fetch accepted invitations
+      const { data: acceptedData, error: acceptedError } = await supabase
+        .from('family_invitations')
+        .select('*')
+        .eq('family_id', familyGroup.id)
+        .eq('accepted', true);
+        
+      if (acceptedError) throw acceptedError;
+      
+      setPendingInvitations(pendingData || []);
+      setAcceptedInvitations(acceptedData || []);
+      
+      console.log('Fetched invitations:', {
+        pending: pendingData?.length || 0,
+        accepted: acceptedData?.length || 0
+      });
+    } catch (err) {
+      console.error('Error fetching invitations:', err);
+    }
+  };
 
-      try {
-        // First get the user's family membership
-        const { data: membershipData, error: membershipError } = await supabase
-          .from('family_members')
-          .select('family_id, role')
-          .eq('user_id', user.id);
-
-        if (membershipError) {
-          console.error('Error fetching membership:', membershipError);
-          setLoading(false);
+  const fetchFamilyData = async () => {
+    if (!user) return;
+  
+    try {
+      console.log('Fetching family data for user:', user.id);
+      
+      // First get the user's family membership
+      const { data: membershipData, error: membershipError } = await supabase
+        .from('family_members')
+        .select('family_id, role')
+        .eq('user_id', user.id);
+  
+      if (membershipError) {
+        console.error('Error fetching membership:', membershipError);
+        setLoading(false);
+        return;
+      }
+  
+      console.log('Membership data:', membershipData);
+  
+      // If no memberships found or empty array, return early
+      if (!membershipData || membershipData.length === 0) {
+        console.log('No family memberships found for user');
+        setLoading(false);
+        // Check if there are any pending invitations for this user
+        if (user.email) {
+          const invited = await checkPendingInvitations(user.email, user.id);
+          if (invited) {
+            // If invitations were processed, try fetching family data again
+            console.log('Processed invitations, retrying family data fetch');
+            const { data: retryMembershipData } = await supabase
+              .from('family_members')
+              .select('family_id, role')
+              .eq('user_id', user.id);
+              
+            if (!retryMembershipData || retryMembershipData.length === 0) {
+              console.log('Still no memberships after invitation check');
+              return;
+            }
+            
+            // Continue with the membership found after invitation check
+            membershipData = retryMembershipData;
+          } else {
+            return;
+          }
+        } else {
           return;
         }
-
-        // If no memberships found or empty array, return early
-        if (!membershipData || membershipData.length === 0) {
-          console.log('No family memberships found for user');
-          setLoading(false);
-          return;
-        }
-
-        // Take the first membership (in case there are multiple)
-        const membership = membershipData[0];
-
-        // Then get the family group details
-        const { data: familyData, error: familyError } = await supabase
-          .from('family_groups')
-          .select('*, created_by')
-          .eq('id', membership.family_id)
+      }
+  
+      // Take the first membership (in case there are multiple)
+      const membership = membershipData[0];
+  
+      // Then get the family group details
+      const { data: familyData, error: familyError } = await supabase
+        .from('family_groups')
+        .select('*, created_by')
+        .eq('id', membership.family_id)
+        .single();
+  
+      if (familyError) {
+        console.error('Error fetching family:', familyError);
+        setLoading(false);
+        return;
+      }
+  
+      // Get all family members
+      const { data: membersData, error: membersError } = await supabase
+        .from('family_members')
+        .select(`
+          id,
+          role,
+          joined_at,
+          user_id,
+          family_id
+        `)
+        .eq('family_id', membership.family_id);
+  
+      if (membersError) {
+        console.error('Error fetching members:', membersError);
+        setLoading(false);
+        return;
+      }
+  
+      console.log('Members data:', membersData);
+      
+      // Also fetch all invitations for this family
+      await fetchAllInvitations();
+  
+      // For each member, fetch their profile data
+      const formattedMembers = await Promise.all(membersData.map(async (member) => {
+        // Get user profile
+        const { data: profileData } = await supabase
+          .from('user_profiles')
+          .select('display_name, avatar_url')
+          .eq('user_id', member.user_id)
           .single();
 
-        if (familyError) {
-          console.error('Error fetching family:', familyError);
-          setLoading(false);
-          return;
-        }
-
-        // Get all family members
-        const { data: membersData, error: membersError } = await supabase
-          .from('family_members')
-          .select(`
-            id,
-            role,
-            joined_at,
-            user_id,
-            family_id
-          `)
-          .eq('family_id', membership.family_id);
-
-        if (membersError) {
-          console.error('Error fetching members:', membersError);
-          setLoading(false);
-          return;
-        }
-
-        // For each member, fetch their profile and auth data
-        const formattedMembers = await Promise.all(membersData.map(async (member) => {
-          // Get user profile
-          const { data: profileData } = await supabase
-            .from('user_profiles')
-            .select('display_name, avatar_url')
-            .eq('user_id', member.user_id)
-            .single();
-
-          // Get user email - this is a simplified approach
-          let email = 'No email';
-          try {
-            // First try the auth.users table (if public access is allowed)
-            const { data: userData } = await supabase
-              .from('auth.users')
-              .select('email')
-              .eq('id', member.user_id)
-              .single();
-              
-            if (userData) {
-              email = userData.email;
+        // Since we can't access auth.admin, we need a different approach
+        // Option 1: Get the email from family_invitations that have been accepted
+        let email = 'No email';
+        try {
+          const { data: invitationData } = await supabase
+            .from('family_invitations')
+            .select('email')
+            .eq('family_id', member.family_id)
+            .eq('accepted', true)
+            .order('created_at', { ascending: false })
+            .limit(1);
+            
+          if (invitationData && invitationData.length > 0) {
+            email = invitationData[0].email;
+          } else {
+            // Option 2: If this is the creator, we can use the current user's email
+            if (member.user_id === user.id) {
+              email = user.email || 'No email';
             }
-          } catch (e) {
-            // If that fails, try another approach or leave as default
-            console.log('Could not fetch email, using default');
           }
+        } catch (e) {
+          console.log('Could not fetch email:', e);
+        }
 
-          return {
-            id: member.id,
-            name: profileData?.display_name || 'Unknown User',
-            email: email,
-            role: member.role,
-            avatar_url: profileData?.avatar_url,
-            joined_at: member.joined_at
-          };
-        }));
+        return {
+          id: member.id,
+          name: profileData?.display_name || 'Unknown User',
+          email: email,
+          role: member.role,
+          avatar_url: profileData?.avatar_url,
+          joined_at: member.joined_at
+        };
+      }));
+  
+      setFamilyGroup({
+        id: familyData.id,
+        name: familyData.name,
+        created_at: familyData.created_at,
+        members: formattedMembers
+      });
+  
+      setIsCreator(familyData.created_by === user.id);
+    } catch (error) {
+      console.error('Error fetching family data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        setFamilyGroup({
-          id: familyData.id,
-          name: familyData.name,
-          created_at: familyData.created_at,
-          members: formattedMembers
-        });
+  // Function to refresh family data
+  const refreshFamilyData = async () => {
+    setLoading(true);
+    await fetchFamilyData();
+    await fetchAllInvitations();
+    setLoading(false);
+  };
 
-        setIsCreator(familyData.created_by === user.id);
-      } catch (error) {
-        console.error('Error fetching family data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchFamilyData();
+  useEffect(() => {
+    if (user) {
+      fetchFamilyData();
+    }
   }, [user]);
+
+  useEffect(() => {
+    if (familyGroup) {
+      fetchAllInvitations();
+    }
+  }, [familyGroup]);
 
   const handleCreateFamily = async () => {
     if (!user) {
@@ -224,7 +410,8 @@ const FamilyPage: React.FC = () => {
           {
             family_id: newFamilyId,
             user_id: user.id,
-            role: 'Creator'
+            role: 'Creator',
+            joined_at: new Date().toISOString()
           }
         ])
         .select();
@@ -242,7 +429,7 @@ const FamilyPage: React.FC = () => {
       // Get the user's display name
       const { data: userData } = await supabase
         .from('user_profiles')
-        .select('display_name, avatar_url')
+        .select('display_name, avatar_url, email')
         .eq('user_id', user.id)
         .single();
 
@@ -254,7 +441,7 @@ const FamilyPage: React.FC = () => {
         members: [{
           id: memberData[0].id,
           name: userData?.display_name || 'You',
-          email: user.email || 'No email',
+          email: userData?.email || user.email || 'No email',
           role: 'Creator',
           avatar_url: userData?.avatar_url,
           joined_at: new Date().toISOString()
@@ -295,6 +482,27 @@ const FamilyPage: React.FC = () => {
     }
   };
 
+  const handleCancelInvitation = async (invitationId: string) => {
+    if (!confirm('Are you sure you want to cancel this invitation?')) return;
+    
+    try {
+      setError(null);
+      const { error } = await supabase
+        .from('family_invitations')
+        .delete()
+        .eq('id', invitationId);
+        
+      if (error) throw error;
+      
+      // Update the pending invitations list
+      setPendingInvitations(pendingInvitations.filter(inv => inv.id !== invitationId));
+      
+    } catch (error: any) {
+      console.error('Error canceling invitation:', error);
+      setError(error.message || 'Failed to cancel invitation. Please try again.');
+    }
+  };
+
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!familyGroup || !user) return;
@@ -303,50 +511,62 @@ const FamilyPage: React.FC = () => {
     setError(null);
     
     try {
-      // Generate a unique invitation code
-      const invitationCode = Math.random().toString(36).substring(2, 10);
+      const cleanEmail = inviteEmail.toLowerCase().trim();
       
-      // Save invitation to database
-      const { data: invitation, error: inviteError } = await supabase
+      // Check if email is already in pending or accepted invitations
+      const existingPending = pendingInvitations.find(inv => 
+        inv.email.toLowerCase() === cleanEmail
+      );
+      
+      const existingAccepted = acceptedInvitations.find(inv => 
+        inv.email.toLowerCase() === cleanEmail
+      );
+      
+      if (existingPending) {
+        alert(`${inviteEmail} is already invited to this family group.`);
+        setInviting(false);
+        setInviteEmail('');
+        setShowInviteForm(false);
+        return;
+      }
+      
+      if (existingAccepted) {
+        alert(`${inviteEmail} has already joined this family group.`);
+        setInviting(false);
+        setInviteEmail('');
+        setShowInviteForm(false);
+        return;
+      }
+      
+      // Save the email to family_invitations
+      const { data: newInvitation, error: inviteError } = await supabase
         .from('family_invitations')
         .insert([{
           family_id: familyGroup.id,
-          email: inviteEmail,
+          email: cleanEmail,
           role: inviteRole,
-          invitation_code: invitationCode,
-          created_by: user.id
+          created_by: user.id,
+          created_at: new Date().toISOString(),
+          accepted: false
         }])
         .select();
-       
         
       if (inviteError) throw inviteError;
       
-      // Send email invitation
-      // Send email invitation using Supabase Edge Function
-      const { data, error: emailError } = await supabase.functions.invoke('send-email', {
-        body: { 
-          recipientEmail: inviteEmail, 
-          familyName: familyGroup.name, 
-          invitationCode, 
-          role: inviteRole 
-        }
-      });
-      const success = !emailError;
-      
-      if (!success) {
-        console.error('Error sending email:', emailError);
-        // Continue anyway, we'll show the link
+      // Update the pending invitations list
+      if (newInvitation && newInvitation.length > 0) {
+        setPendingInvitations([...pendingInvitations, newInvitation[0]]);
       }
       
       // Show success message
-      alert(`Invitation sent to ${inviteEmail}!`);
+      alert(`${inviteEmail} added to family group! They'll be automatically added when they register.`);
       
       setInviteEmail('');
       setShowInviteForm(false);
       
     } catch (error: any) {
-      console.error('Error creating invitation:', error);
-      setError(error.message || 'Failed to create invitation. Please try again.');
+      console.error('Error adding email:', error);
+      setError(error.message || 'Failed to add email. Please try again.');
     } finally {
       setInviting(false);
     }
@@ -364,15 +584,26 @@ const FamilyPage: React.FC = () => {
     <div className="space-y-8">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-gray-800">Family Group</h1>
-        {familyGroup && (
+        
+        <div className="flex space-x-2">
           <button 
-            onClick={() => setShowInviteForm(true)}
-            className="btn-primary flex items-center"
+            onClick={refreshFamilyData}
+            className="btn-outline flex items-center"
           >
-            <UserPlus size={18} className="mr-2" />
-            Invite Member
+            <RefreshCw size={16} className="mr-2" />
+            Refresh
           </button>
-        )}
+          
+          {familyGroup && (
+            <button 
+              onClick={() => setShowInviteForm(true)}
+              className="btn-primary flex items-center"
+            >
+              <UserPlus size={18} className="mr-2" />
+              Add Family Member
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -418,6 +649,13 @@ const FamilyPage: React.FC = () => {
               />
             ))}
           </div>
+          
+          {/* Add the invitations list component here */}
+          <InvitationsList 
+            pendingInvitations={pendingInvitations}
+            acceptedInvitations={acceptedInvitations}
+            onCancel={handleCancelInvitation} 
+          />
         </div>
       ) : (
         <div className="text-center py-12 bg-white rounded-xl shadow-md">
@@ -443,7 +681,7 @@ const FamilyPage: React.FC = () => {
         </div>
       )}
 
-      {/* Invite Member Dialog */}
+      {/* Simplified Invite Member Dialog */}
       {showInviteForm && (
         <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4">
           <motion.div 
@@ -454,7 +692,7 @@ const FamilyPage: React.FC = () => {
           >
             <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
               <UserPlus size={20} className="mr-2 text-primary-500" />
-              Invite Family Member
+              Add Family Member by Email
             </h3>
             <form onSubmit={handleInvite}>
               <div className="space-y-4">
@@ -513,7 +751,7 @@ const FamilyPage: React.FC = () => {
                   {inviting ? (
                     <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>
                   ) : (
-                    'Send Invitation'
+                    'Add to Family'
                   )}
                 </button>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Mail, Lock, User, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -12,27 +12,52 @@ const AuthPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showConfirmationMessage, setShowConfirmationMessage] = useState(false);
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, checkPendingInvitations, user } = useAuth();
   const navigate = useNavigate();
+
+  // Check if the user is already logged in and has pending invitations
+  useEffect(() => {
+    const checkInvites = async () => {
+      if (user && user.email) {
+        await checkPendingInvitations(user.email, user.id);
+      }
+    };
+    
+    checkInvites();
+  }, [user, checkPendingInvitations]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
     setShowConfirmationMessage(false);
+    
+    const cleanEmail = email.toLowerCase().trim();
 
     try {
       if (isSignUp) {
-        await signUp(email, password, {
+        const result = await signUp(cleanEmail, password, {
           display_name: displayName
         });
+        
+        if (result.data && result.data.user) {
+          // Check for invitations immediately
+          await checkPendingInvitations(cleanEmail, result.data.user.id);
+        }
+        
         setShowConfirmationMessage(true);
       } else {
-        await signIn(email, password);
+        const result = await signIn(cleanEmail, password);
+        
+        if (result.data && result.data.user) {
+          // Check for invitations immediately
+          await checkPendingInvitations(cleanEmail, result.data.user.id);
+        }
+        
         navigate('/');
       }
     } catch (error: any) {
-      if (error.message.includes('email_not_confirmed')) {
+      if (error.message && error.message.includes('email_not_confirmed')) {
         setShowConfirmationMessage(true);
       } else {
         setError(error.message || 'An error occurred. Please try again.');
