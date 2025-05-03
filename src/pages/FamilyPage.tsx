@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Users, Mail, Plus, Edit, Trash2, UserPlus, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
@@ -63,6 +63,7 @@ const FamilyMemberCard: React.FC<{
         <button 
           onClick={() => onRemove(member.id)} 
           className="p-2 text-gray-400 hover:text-error-600 rounded-full hover:bg-error-50"
+          aria-label={`Remove ${member.name}`}
         >
           <Trash2 size={18} />
         </button>
@@ -114,6 +115,7 @@ const InvitationsList: React.FC<{
                   <button 
                     onClick={() => onCancel(invitation.id)} 
                     className="p-2 text-gray-400 hover:text-error-600 rounded-full hover:bg-error-50"
+                    aria-label={`Cancel invitation for ${invitation.email}`}
                   >
                     <Trash2 size={18} />
                   </button>
@@ -170,7 +172,7 @@ const FamilyPage: React.FC = () => {
   const [acceptedInvitations, setAcceptedInvitations] = useState<Invitation[]>([]);
 
   // Function to fetch all invitations (both pending and accepted)
-  const fetchAllInvitations = async () => {
+  const fetchAllInvitations = useCallback(async () => {
     if (!familyGroup) return;
     
     try {
@@ -201,10 +203,11 @@ const FamilyPage: React.FC = () => {
       });
     } catch (err) {
       console.error('Error fetching invitations:', err);
+      setError('Could not load invitations. Please try refreshing.');
     }
-  };
+  }, [familyGroup]);
 
-  const fetchFamilyData = async () => {
+  const fetchFamilyData = useCallback(async () => {
     if (!user) return;
   
     try {
@@ -219,6 +222,7 @@ const FamilyPage: React.FC = () => {
       if (membershipError) {
         console.error('Error fetching membership:', membershipError);
         setLoading(false);
+        setError('Failed to load family data. Please try again.');
         return;
       }
   
@@ -234,28 +238,45 @@ const FamilyPage: React.FC = () => {
           if (invited) {
             // If invitations were processed, try fetching family data again
             console.log('Processed invitations, retrying family data fetch');
-            const { data: retryMembershipData } = await supabase
+            const { data: retryMembershipData, error: retryError } = await supabase
               .from('family_members')
               .select('family_id, role')
               .eq('user_id', user.id);
               
+            if (retryError) {
+              console.error('Error retrying membership fetch:', retryError);
+              setLoading(false);
+              setError('Failed to load family data. Please try again.');
+              return;
+            }
+              
             if (!retryMembershipData || retryMembershipData.length === 0) {
               console.log('Still no memberships after invitation check');
+              setLoading(false);
               return;
             }
             
             // Continue with the membership found after invitation check
             membershipData = retryMembershipData;
           } else {
+            setLoading(false);
             return;
           }
         } else {
+          setLoading(false);
           return;
         }
       }
   
       // Take the first membership (in case there are multiple)
       const membership = membershipData[0];
+      
+      if (!membership) {
+        console.error('Membership data exists but first item is undefined');
+        setLoading(false);
+        setError('Failed to load membership data. Please try again.');
+        return;
+      }
   
       // Then get the family group details
       const { data: familyData, error: familyError } = await supabase
@@ -267,6 +288,7 @@ const FamilyPage: React.FC = () => {
       if (familyError) {
         console.error('Error fetching family:', familyError);
         setLoading(false);
+        setError('Could not load family group. Please try again.');
         return;
       }
   
@@ -285,13 +307,11 @@ const FamilyPage: React.FC = () => {
       if (membersError) {
         console.error('Error fetching members:', membersError);
         setLoading(false);
+        setError('Could not load family members. Please try again.');
         return;
       }
   
       console.log('Members data:', membersData);
-      
-      // Also fetch all invitations for this family
-      await fetchAllInvitations();
   
       // For each member, fetch their profile data
       const formattedMembers = await Promise.all(membersData.map(async (member) => {
@@ -310,6 +330,7 @@ const FamilyPage: React.FC = () => {
             .from('family_invitations')
             .select('email')
             .eq('family_id', member.family_id)
+            .eq('user_id', member.user_id)
             .eq('accepted', true)
             .order('created_at', { ascending: false })
             .limit(1);
@@ -344,18 +365,22 @@ const FamilyPage: React.FC = () => {
       });
   
       setIsCreator(familyData.created_by === user.id);
-    } catch (error) {
+      
+      // Fetch invitations after setting family group
+      await fetchAllInvitations();
+    } catch (error: any) {
       console.error('Error fetching family data:', error);
+      setError('An error occurred while loading family data. Please try again.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, checkPendingInvitations, fetchAllInvitations]);
 
   // Function to refresh family data
   const refreshFamilyData = async () => {
     setLoading(true);
+    setError(null);
     await fetchFamilyData();
-    await fetchAllInvitations();
     setLoading(false);
   };
 
@@ -363,13 +388,7 @@ const FamilyPage: React.FC = () => {
     if (user) {
       fetchFamilyData();
     }
-  }, [user]);
-
-  useEffect(() => {
-    if (familyGroup) {
-      fetchAllInvitations();
-    }
-  }, [familyGroup]);
+  }, [user, fetchFamilyData]);
 
   const handleCreateFamily = async () => {
     if (!user) {
@@ -576,6 +595,7 @@ const FamilyPage: React.FC = () => {
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-600"></div>
+        <span className="sr-only">Loading...</span>
       </div>
     );
   }
@@ -589,6 +609,7 @@ const FamilyPage: React.FC = () => {
           <button 
             onClick={refreshFamilyData}
             className="btn-outline flex items-center"
+            aria-label="Refresh family data"
           >
             <RefreshCw size={16} className="mr-2" />
             Refresh
@@ -598,6 +619,7 @@ const FamilyPage: React.FC = () => {
             <button 
               onClick={() => setShowInviteForm(true)}
               className="btn-primary flex items-center"
+              aria-label="Add family member"
             >
               <UserPlus size={18} className="mr-2" />
               Add Family Member
@@ -607,14 +629,18 @@ const FamilyPage: React.FC = () => {
       </div>
 
       {error && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
           <span className="block sm:inline">{error}</span>
-          <span className="absolute top-0 bottom-0 right-0 px-4 py-3" onClick={() => setError(null)}>
+          <button 
+            className="absolute top-0 bottom-0 right-0 px-4 py-3" 
+            onClick={() => setError(null)}
+            aria-label="Close error message"
+          >
             <svg className="fill-current h-6 w-6 text-red-500" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
               <title>Close</title>
               <path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z"/>
             </svg>
-          </span>
+          </button>
         </div>
       )}
 
@@ -628,7 +654,7 @@ const FamilyPage: React.FC = () => {
               </p>
             </div>
             {isCreator && (
-              <button className="btn-outline flex items-center">
+              <button className="btn-outline flex items-center" aria-label="Edit family group">
                 <Edit size={16} className="mr-2" />
                 Edit Group
               </button>
@@ -640,14 +666,18 @@ const FamilyPage: React.FC = () => {
               Family Members ({familyGroup.members.length})
             </h3>
             
-            {familyGroup.members.map((member) => (
-              <FamilyMemberCard 
-                key={member.id} 
-                member={member} 
-                onRemove={handleRemoveMember}
-                isCreator={isCreator}
-              />
-            ))}
+            {familyGroup.members.length > 0 ? (
+              familyGroup.members.map((member) => (
+                <FamilyMemberCard 
+                  key={member.id} 
+                  member={member} 
+                  onRemove={handleRemoveMember}
+                  isCreator={isCreator}
+                />
+              ))
+            ) : (
+              <p className="text-gray-500 italic">No family members found.</p>
+            )}
           </div>
           
           {/* Add the invitations list component here */}
@@ -683,7 +713,7 @@ const FamilyPage: React.FC = () => {
 
       {/* Simplified Invite Member Dialog */}
       {showInviteForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
           <motion.div 
             className="bg-white rounded-xl shadow-xl max-w-md w-full p-6"
             initial={{ opacity: 0, scale: 0.9 }}
