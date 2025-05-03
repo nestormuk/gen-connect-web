@@ -211,7 +211,7 @@ const FamilyPage: React.FC = () => {
       console.log('Fetching family data for user:', user.id);
       
       // First get the user's family membership
-      const { data: membershipData, error: membershipError } = await supabase
+      let { data: membershipData, error: membershipError } = await supabase
         .from('family_members')
         .select('family_id, role')
         .eq('user_id', user.id);
