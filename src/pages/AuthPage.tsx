@@ -15,52 +15,126 @@ const AuthPage: React.FC = () => {
   const { signIn, signUp, checkPendingInvitations, user } = useAuth();
   const navigate = useNavigate();
 
-  // Check if the user is already logged in and has pending invitations
+  // Check if the user is already logged in
   useEffect(() => {
-    const checkInvites = async () => {
-      if (user && user.email) {
-        await checkPendingInvitations(user.email, user.id);
-      }
-    };
+    if (user) {
+      console.log('User already logged in, checking invitations');
+      const checkInvites = async () => {
+        if (user.email) {
+          try {
+            await checkPendingInvitations(user.email, user.id);
+          } catch (error) {
+            console.error('Error checking invitations for logged in user:', error);
+          }
+        }
+      };
+      
+      checkInvites();
+      
+      // Redirect to homepage if already logged in
+      navigate('/');
+    }
+  }, [user, checkPendingInvitations, navigate]);
+
+  const validateInputs = () => {
+    if (!email.trim()) {
+      setError('Email is required');
+      return false;
+    }
     
-    checkInvites();
-  }, [user, checkPendingInvitations]);
+    if (!password) {
+      setError('Password is required');
+      return false;
+    }
+    
+    if (isSignUp && !displayName.trim()) {
+      setError('Display name is required');
+      return false;
+    }
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError('Please enter a valid email address');
+      return false;
+    }
+    
+    // Password length check
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return false;
+    }
+    
+    return true;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    
+    // Validate inputs
+    if (!validateInputs()) {
+      return;
+    }
+    
     setLoading(true);
     setShowConfirmationMessage(false);
     
     const cleanEmail = email.toLowerCase().trim();
-
+    
     try {
+      console.log(`Attempting to ${isSignUp ? 'sign up' : 'sign in'}:`, cleanEmail);
+      
       if (isSignUp) {
         const result = await signUp(cleanEmail, password, {
-          display_name: displayName
+          display_name: displayName.trim()
         });
         
-        if (result.data && result.data.user) {
-          // Check for invitations immediately
-          await checkPendingInvitations(cleanEmail, result.data.user.id);
+        if (result.error) {
+          setError(result.error.message || 'An error occurred during sign up.');
+          console.error('Sign up error:', result.error);
+        } else {
+          console.log('Sign up successful');
+          
+          // If there's a user, attempt to check for invitations
+          if (result.data && result.data.user) {
+            try {
+              await checkPendingInvitations(cleanEmail, result.data.user.id);
+            } catch (inviteError) {
+              console.error('Error checking invitations after signup:', inviteError);
+            }
+          }
+          
+          setShowConfirmationMessage(true);
         }
-        
-        setShowConfirmationMessage(true);
       } else {
         const result = await signIn(cleanEmail, password);
         
-        if (result.data && result.data.user) {
-          // Check for invitations immediately
-          await checkPendingInvitations(cleanEmail, result.data.user.id);
+        if (result.error) {
+          setError(result.error.message || 'Invalid login credentials. Please try again.');
+          console.error('Sign in error:', result.error);
+        } else {
+          console.log('Sign in successful');
+          
+          // If there's a user, attempt to check for invitations
+          if (result.data && result.data.user) {
+            try {
+              await checkPendingInvitations(cleanEmail, result.data.user.id);
+            } catch (inviteError) {
+              console.error('Error checking invitations after signin:', inviteError);
+            }
+          }
+          
+          navigate('/');
         }
-        
-        navigate('/');
       }
     } catch (error: any) {
+      console.error(`Error during ${isSignUp ? 'sign up' : 'sign in'}:`, error);
+      
       if (error.message && error.message.includes('email_not_confirmed')) {
         setShowConfirmationMessage(true);
       } else {
-        setError(error.message || 'An error occurred. Please try again.');
+        setError(error.message || 'An unexpected error occurred. Please try again.');
       }
     } finally {
       setLoading(false);
