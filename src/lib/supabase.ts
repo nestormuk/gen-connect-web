@@ -1,22 +1,32 @@
-// supabase.js
+// Modified supabase.js
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './database.types';
 
-// Use the real values from your environment
+// Get environment variables
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Log configuration but not full key
-console.log('Supabase Config:', {
-  url: supabaseUrl,
-  keyProvided: Boolean(supabaseAnonKey)
+// Log configuration (safely)
+console.log('Supabase initialization (PROD):', {
+  urlDefined: Boolean(supabaseUrl),
+  keyDefined: Boolean(supabaseAnonKey),
+  urlPrefix: supabaseUrl?.substring(0, 10) + '...',
+  mode: import.meta.env.MODE
 });
 
+// Validate environment variables
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Supabase environment variables are not set.');
+  console.error('CRITICAL ERROR: Missing Supabase environment variables in production');
+  
+  // In production, don't throw - provide safe fallbacks
+  if (import.meta.env.PROD) {
+    alert('Configuration error detected. Please contact support.');
+  } else {
+    throw new Error('Supabase environment variables are not set.');
+  }
 }
 
-// Create client with specific options to help troubleshoot
+// Create the Supabase client with production-specific settings
 export const supabase = createClient<Database>(
   supabaseUrl, 
   supabaseAnonKey,
@@ -24,18 +34,30 @@ export const supabase = createClient<Database>(
     auth: {
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: true
+      detectSessionInUrl: true,
+      storageKey: 'genconnect-auth-token',
+      flowType: 'implicit' // Try explicit if you have issues
+    },
+    global: {
+      headers: {
+        'x-application-name': 'GenConnect',
+      }
+    },
+    realtime: {
+      params: {
+        eventsPerSecond: 10
+      }
     }
   }
 );
 
-// Test connection
-console.log('Testing Supabase connection...');
+// Run a quick test to verify connection
+console.log('Testing Supabase connection in ' + (import.meta.env.PROD ? 'PRODUCTION' : 'DEVELOPMENT'));
 supabase.auth.getSession()
   .then(response => {
-    console.log('Supabase connection test result:', 
-      response ? 'Response received' : 'No response');
+    console.log('Supabase connection test result:', Boolean(response));
+    console.log('Session exists:', Boolean(response?.data?.session));
   })
-  .catch(error => {
-    console.error('Supabase connection test failed:', error);
+  .catch(err => {
+    console.error('Supabase connection test failed:', err);
   });
