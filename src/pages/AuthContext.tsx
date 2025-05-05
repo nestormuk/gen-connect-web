@@ -161,26 +161,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signIn = async (email: string, password: string) => {
     try {
       setLoading(true);
-      
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      
-      if (error) throw error;
-      
-      // Check for pending invitations after successful login
-      if (data && data.user) {
-        await checkPendingInvitations(email, data.user.id);
+  
+      // Debug log: check if env vars are correctly loaded (Vercel-specific)
+      console.log('Supabase URL:', import.meta.env.VITE_SUPABASE_URL);
+      console.log('Supabase Key present:', Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY));
+  
+      // Call Supabase sign-in
+      const result = await supabase.auth.signInWithPassword({ email, password });
+  
+      if (!result) {
+        throw new Error('No response from Supabase');
       }
-      
+  
+      const { data, error } = result;
+  
+      if (error) {
+        console.error('Supabase error:', error.message);
+        throw error;
+      }
+  
+      if (data?.user) {
+        await checkPendingInvitations(email, data.user.id);
+        setUser(data.user); // Optional: ensure user is set
+      }
+  
       return { data, error: null };
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Sign-in error:', error);
       return { data: null, error };
     } finally {
       setLoading(false);
     }
   };
+  
 
   const signUp = async (email: string, password: string, userData: any) => {
     try {
