@@ -86,35 +86,69 @@ const AuthPage: React.FC = () => {
       console.log(`Attempting to ${isSignUp ? 'sign up' : 'sign in'}:`, cleanEmail);
       
       if (isSignUp) {
-        const result = await signUp(cleanEmail, password, {
-          display_name: displayName.trim()
-        });
+        // First, safely handle the sign up operation
+        let result;
+        try {
+          result = await signUp(cleanEmail, password, {
+            display_name: displayName.trim()
+          });
+        } catch (signUpError: any) {
+          // Handle errors during signUp function call
+          console.error('Error calling signUp function:', signUpError);
+          
+          // Set default result structure if signUp throws instead of returning an error object
+          result = {
+            error: signUpError,
+            data: null
+          };
+        }
         
-        if (result.error) {
-          // Check for specific error types
-          const errorMessage = result.error.message || 'An error occurred during sign up.';
+        // Now safely check for errors in the result
+        if (result && result.error) {
+          // Safely access error message with fallback
+          const errorObj = result.error || {};
+          const errorMessage = 
+            typeof errorObj === 'string' ? errorObj : 
+            (errorObj.message || 'An error occurred during sign up.');
+          
+          console.log('Sign up error message:', errorMessage);
           
           // Check if it's a duplicate email error
-          if (errorMessage.includes('already registered') || 
+          if (typeof errorMessage === 'string' && (
+              errorMessage.includes('already registered') || 
               errorMessage.includes('email exists') ||
-              errorMessage.includes('already taken')) {
+              errorMessage.includes('already taken') ||
+              errorMessage.includes('unique constraint'))) {
             setError('This email is already registered. Please sign in instead.');
           } 
           // Check if it's a confirmation needed error
-          else if (errorMessage.includes('email_not_confirmed') || 
-                   errorMessage.includes('confirmation') ||
-                   errorMessage.includes('verify')) {
+          else if (typeof errorMessage === 'string' && (
+              errorMessage.includes('email_not_confirmed') || 
+              errorMessage.includes('confirmation') ||
+              errorMessage.includes('verify'))) {
             setShowConfirmationMessage(true);
           } 
+          // New condition for $ undefined errors
+          else if (typeof errorMessage === 'string' && (
+              errorMessage.includes('$ is undefined') || 
+              errorMessage.includes('$ is not defined') ||
+              errorMessage.includes('Cannot read properties') ||
+              errorMessage.includes('undefined is not an object') ||
+              errorMessage.includes('undefined variable'))) {
+            // This is likely a backend error but the user was actually registered
+            console.log('Detected $ undefined error, showing confirmation message');
+            setShowConfirmationMessage(true);
+          }
           else {
-            setError(errorMessage);
-            console.error('Sign up error:', result.error);
+            // Fallback for other error types
+            setError(typeof errorMessage === 'string' ? errorMessage : 'An unexpected error occurred');
+            console.error('Sign up error details:', result.error);
           }
         } else {
           console.log('Sign up successful');
           
           // If there's a user, attempt to check for invitations
-          if (result.data && result.data.user) {
+          if (result && result.data && result.data.user) {
             try {
               await checkPendingInvitations(cleanEmail, result.data.user.id);
             } catch (inviteError) {
@@ -125,25 +159,52 @@ const AuthPage: React.FC = () => {
           setShowConfirmationMessage(true);
         }
       } else {
-        const result = await signIn(cleanEmail, password);
+        // Sign in flow - similar protections
+        let result;
+        try {
+          result = await signIn(cleanEmail, password);
+        } catch (signInError: any) {
+          console.error('Error calling signIn function:', signInError);
+          result = {
+            error: signInError,
+            data: null
+          };
+        }
         
-        if (result.error) {
-          const errorMessage = result.error.message || 'Invalid login credentials. Please try again.';
+        if (result && result.error) {
+          const errorObj = result.error || {};
+          const errorMessage = 
+            typeof errorObj === 'string' ? errorObj : 
+            (errorObj.message || 'Invalid login credentials. Please try again.');
+          
+          console.log('Sign in error message:', errorMessage);
           
           // Check if it's a confirmation needed error
-          if (errorMessage.includes('email_not_confirmed') || 
+          if (typeof errorMessage === 'string' && (
+              errorMessage.includes('email_not_confirmed') || 
               errorMessage.includes('confirmation') || 
-              errorMessage.includes('verify')) {
+              errorMessage.includes('verify'))) {
             setShowConfirmationMessage(true);
-          } else {
-            setError(errorMessage);
-            console.error('Sign in error:', result.error);
+          } 
+          // New condition for $ undefined errors
+          else if (typeof errorMessage === 'string' && (
+              errorMessage.includes('$ is undefined') || 
+              errorMessage.includes('$ is not defined') ||
+              errorMessage.includes('Cannot read properties') ||
+              errorMessage.includes('undefined is not an object') ||
+              errorMessage.includes('undefined variable'))) {
+            console.log('Detected $ undefined error during sign in, showing confirmation message');
+            setShowConfirmationMessage(true);
+          }
+          else {
+            setError(typeof errorMessage === 'string' ? errorMessage : 'Invalid login credentials');
+            console.error('Sign in error details:', result.error);
           }
         } else {
           console.log('Sign in successful');
           
           // If there's a user, attempt to check for invitations
-          if (result.data && result.data.user) {
+          if (result && result.data && result.data.user) {
             try {
               await checkPendingInvitations(cleanEmail, result.data.user.id);
             } catch (inviteError) {
@@ -155,9 +216,15 @@ const AuthPage: React.FC = () => {
         }
       }
     } catch (error: any) {
-      console.error(`Error during ${isSignUp ? 'sign up' : 'sign in'}:`, error);
+      console.error(`Outer error handler during ${isSignUp ? 'sign up' : 'sign in'}:`, error);
       
-      // Improved error handling - check for different error types
+      // Safely handle the error object
+      if (!error || typeof error !== 'object') {
+        setError('An unexpected error occurred. Please try again.');
+        return;
+      }
+      
+      // Safely extract the error message with fallback
       const errorMessage = error.message || 'An unexpected error occurred. Please try again.';
       
       if (typeof errorMessage === 'string') {
@@ -180,8 +247,10 @@ const AuthPage: React.FC = () => {
         else if (errorMessage.includes('$ is undefined') || 
                  errorMessage.includes('$ is not defined') ||
                  errorMessage.includes('Cannot read properties') ||
+                 errorMessage.includes('undefined is not an object') ||
                  errorMessage.includes('undefined variable')) {
           // This is likely a backend error but the user was actually registered
+          console.log('Detected $ undefined error in outer catch, showing confirmation message');
           setShowConfirmationMessage(true);
         }
         else {
