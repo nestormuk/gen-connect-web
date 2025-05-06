@@ -15,7 +15,7 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [displayName, setDisplayName] = useState<string>('User');
   const [loading, setLoading] = useState<boolean>(true);
-  // Add this state for tracking invitations count
+  const [signOutLoading, setSignOutLoading] = useState<boolean>(false);
   const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
 
   useEffect(() => {
@@ -93,12 +93,44 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
     };
   }, [user]);
 
+  // Improved sign out handler
   const handleSignOut = async () => {
+    if (signOutLoading) return; // Prevent multiple clicks
+    
+    setSignOutLoading(true);
     try {
-      await signOut();
-      navigate('/auth');
+      console.log('Starting sign out process...');
+      
+      // First, try using Supabase directly to sign out
+      // This is a fallback in case the context method fails
+      const { error: supabaseError } = await supabase.auth.signOut();
+      if (supabaseError) {
+        console.error('Supabase signOut error:', supabaseError);
+      } else {
+        console.log('Supabase signOut successful');
+      }
+      
+      // Then try the context method
+      try {
+        await signOut();
+        console.log('Context signOut successful');
+      } catch (contextError) {
+        console.error('Context signOut error:', contextError);
+        // Continue anyway since we already tried Supabase directly
+      }
+      
+      // Clear any local state/storage that might be keeping user info
+      localStorage.removeItem('supabase.auth.token');
+      sessionStorage.removeItem('supabase.auth.token');
+      
+      console.log('Navigating to auth page...');
+      // Force a page reload to clear any React state
+      window.location.href = '/auth';
     } catch (error) {
-      console.error('Error signing out:', error);
+      console.error('General error during sign out:', error);
+      alert('There was a problem signing out. Please try again or refresh the page.');
+    } finally {
+      setSignOutLoading(false);
     }
   };
 
@@ -199,10 +231,15 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
                   <button 
                     className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                     onClick={handleSignOut}
+                    disabled={signOutLoading}
                   >
                     <div className="flex items-center space-x-2">
-                      <LogOut size={16} />
-                      <span>Sign out</span>
+                      {signOutLoading ? (
+                        <div className="h-4 w-4 border-t-2 border-b-2 border-gray-500 rounded-full animate-spin"></div>
+                      ) : (
+                        <LogOut size={16} />
+                      )}
+                      <span>{signOutLoading ? 'Signing out...' : 'Sign out'}</span>
                     </div>
                   </button>
                 </motion.div>
