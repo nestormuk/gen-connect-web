@@ -93,42 +93,42 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
     };
   }, [user]);
 
-  // Improved sign out handler
-  const handleSignOut = async () => {
+  // Improved sign out handler that works with SPA routing
+  const handleSignOut = async (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent default to avoid any issues with normal link behavior
+    
     if (signOutLoading) return; // Prevent multiple clicks
     
     setSignOutLoading(true);
     try {
       console.log('Starting sign out process...');
       
-      // First, try using Supabase directly to sign out
-      // This is a fallback in case the context method fails
-      const { error: supabaseError } = await supabase.auth.signOut();
-      if (supabaseError) {
-        console.error('Supabase signOut error:', supabaseError);
-      } else {
-        console.log('Supabase signOut successful');
-      }
-      
-      // Then try the context method
+      // Try the context method first
       try {
         await signOut();
         console.log('Context signOut successful');
       } catch (contextError) {
         console.error('Context signOut error:', contextError);
-        // Continue anyway since we already tried Supabase directly
+        
+        // Fallback to using Supabase directly if context method fails
+        const { error: supabaseError } = await supabase.auth.signOut();
+        if (supabaseError) {
+          console.error('Supabase signOut error:', supabaseError);
+          throw supabaseError; // Rethrow to be caught by outer catch
+        } else {
+          console.log('Supabase signOut successful');
+        }
       }
       
-      // Clear any local state/storage that might be keeping user info
-      localStorage.removeItem('supabase.auth.token');
-      sessionStorage.removeItem('supabase.auth.token');
+      // Close the user menu
+      setShowUserMenu(false);
       
+      // Use React Router for navigation to maintain SPA
       console.log('Navigating to auth page...');
-      // Force a page reload to clear any React state
-      window.location.href = '/auth';
+      navigate('/auth', { replace: true });
     } catch (error) {
       console.error('General error during sign out:', error);
-      alert('There was a problem signing out. Please try again or refresh the page.');
+      alert('There was a problem signing out. Please try again.');
     } finally {
       setSignOutLoading(false);
     }
@@ -228,10 +228,11 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
                     )}
                   </Link>
                   
-                  <button 
+                  {/* Using Link component for sign out to maintain SPA routing */}
+                  <Link 
+                    to="/auth"
                     className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                     onClick={handleSignOut}
-                    disabled={signOutLoading}
                   >
                     <div className="flex items-center space-x-2">
                       {signOutLoading ? (
@@ -241,7 +242,7 @@ const Navbar: React.FC<NavbarProps> = ({ onMenuClick }) => {
                       )}
                       <span>{signOutLoading ? 'Signing out...' : 'Sign out'}</span>
                     </div>
-                  </button>
+                  </Link>
                 </motion.div>
               )}
             </div>
