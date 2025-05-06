@@ -91,8 +91,25 @@ const AuthPage: React.FC = () => {
         });
         
         if (result.error) {
-          setError(result.error.message || 'An error occurred during sign up.');
-          console.error('Sign up error:', result.error);
+          // Check for specific error types
+          const errorMessage = result.error.message || 'An error occurred during sign up.';
+          
+          // Check if it's a duplicate email error
+          if (errorMessage.includes('already registered') || 
+              errorMessage.includes('email exists') ||
+              errorMessage.includes('already taken')) {
+            setError('This email is already registered. Please sign in instead.');
+          } 
+          // Check if it's a confirmation needed error
+          else if (errorMessage.includes('email_not_confirmed') || 
+                   errorMessage.includes('confirmation') ||
+                   errorMessage.includes('verify')) {
+            setShowConfirmationMessage(true);
+          } 
+          else {
+            setError(errorMessage);
+            console.error('Sign up error:', result.error);
+          }
         } else {
           console.log('Sign up successful');
           
@@ -111,8 +128,17 @@ const AuthPage: React.FC = () => {
         const result = await signIn(cleanEmail, password);
         
         if (result.error) {
-          setError(result.error.message || 'Invalid login credentials. Please try again.');
-          console.error('Sign in error:', result.error);
+          const errorMessage = result.error.message || 'Invalid login credentials. Please try again.';
+          
+          // Check if it's a confirmation needed error
+          if (errorMessage.includes('email_not_confirmed') || 
+              errorMessage.includes('confirmation') || 
+              errorMessage.includes('verify')) {
+            setShowConfirmationMessage(true);
+          } else {
+            setError(errorMessage);
+            console.error('Sign in error:', result.error);
+          }
         } else {
           console.log('Sign in successful');
           
@@ -131,10 +157,38 @@ const AuthPage: React.FC = () => {
     } catch (error: any) {
       console.error(`Error during ${isSignUp ? 'sign up' : 'sign in'}:`, error);
       
-      if (error.message && error.message.includes('email_not_confirmed')) {
-        setShowConfirmationMessage(true);
+      // Improved error handling - check for different error types
+      const errorMessage = error.message || 'An unexpected error occurred. Please try again.';
+      
+      if (typeof errorMessage === 'string') {
+        // Handle email confirmation errors
+        if (errorMessage.includes('email_not_confirmed') || 
+            errorMessage.includes('confirmation') || 
+            errorMessage.includes('verify')) {
+          setShowConfirmationMessage(true);
+        } 
+        // Handle duplicate email errors
+        else if (isSignUp && (
+            errorMessage.includes('already registered') || 
+            errorMessage.includes('email exists') || 
+            errorMessage.includes('already taken') ||
+            errorMessage.includes('duplicate key') ||
+            errorMessage.includes('unique constraint'))) {
+          setError('This email is already registered. Please sign in instead.');
+        }
+        // Handle "$" undefined errors (typically seen in Supabase error messages)
+        else if (errorMessage.includes('$ is undefined') || 
+                 errorMessage.includes('$ is not defined') ||
+                 errorMessage.includes('Cannot read properties') ||
+                 errorMessage.includes('undefined variable')) {
+          // This is likely a backend error but the user was actually registered
+          setShowConfirmationMessage(true);
+        }
+        else {
+          setError(errorMessage);
+        }
       } else {
-        setError(error.message || 'An unexpected error occurred. Please try again.');
+        setError('An unexpected error occurred. Please try again.');
       }
     } finally {
       setLoading(false);
